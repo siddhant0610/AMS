@@ -6,7 +6,7 @@ const Schema=new mongoose.Schema({
     course:{type:'String', required:true}, // which course the student is enrolled in 
     subjects:{type:[String], required:true},
    // photo:{type:[String],required:true},
-   Semister:{type:'Integer',required:true,
+   Semister:{type:'Number',required:true,
     min:1,
     max:10,
    },
