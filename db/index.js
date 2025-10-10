@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import {DB_Name} from '../constraints.js';
+import { DB_Name } from '../constraints.js';;
 const connDb=(async()=>{
     try{
       const ConnectionInstance= await mongoose.connect(`${process.env.URI}/${DB_Name}`,)

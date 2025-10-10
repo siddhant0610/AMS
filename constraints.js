@@ -1,1 +1,1 @@
-const DB_Name="AMS";
+export const DB_Name="AMS";

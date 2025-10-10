@@ -1,5 +1,8 @@
-import mongoose from "mongoose";
-import {DB_Name} from './constraints.js';
+//require('dotenv').config({path:'./.env'});
+import dotenv from 'dotenv';
 import express from "express"
 import connDb from "./db/index.js";
-const app=express();
+dotenv.config({
+    path:'./.env'
+});
+connDb();
