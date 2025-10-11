@@ -1,10 +1,12 @@
 import mongoose from "mongoose"
 import { Student } from "./Student";
-const mongoose=require('mongoose');
+import { Teacher } from "./Teacher";
+import { Section } from "./Section";
+import mongooseAggregatePaginate from "mongoose-aggregate-paginate";
 const CourseSchema=new mongoose.Schema({
     // CourseName:{type:'String',required:true},
     CourseDetails: {
-        courseCode: { type: String, required: true, unique: true },
+        courseCode: { type: String, required: true, unique: true,index:true },
         CourseName: { type: String, required: true },
          Section:{type:String,required:true, trim:true},
         department:{type:mongoose.Schema.Types.ObjectId, ref:"Student"}
@@ -19,5 +21,6 @@ const CourseSchema=new mongoose.Schema({
     },
    
 },{timestamps:true})
+CourseSchema.plugin(mongooseAggregatePaginate);
 export const Course=mongoose.model('Course',CourseSchema);
 // cse21001

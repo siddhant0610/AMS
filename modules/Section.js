@@ -1,6 +1,8 @@
 const mongoose=require('mongoose');
 const { Student}=require('./Student');
 const {Course}=require('./Course');
+// const {Teacher}=require('./Teacher');
+import mongooseAggregatePaginate from 'mongoose-aggregate-paginate';
 const SectionSchema=new mongoose.Schema({
     SectionName:{type:'String',required:true},
    Student: [
@@ -36,4 +38,5 @@ const SectionSchema=new mongoose.Schema({
     completed: { type: Boolean, default: false }
 
 }, { timestamps: true });
+SectionSchema.plugin(mongooseAggregatePaginate);
 export const Section=mongoose.model('Section',SectionSchema);
