@@ -6,15 +6,17 @@ const CourseSchema=new mongoose.Schema({
     CourseDetails: {
         courseCode: { type: String, required: true, unique: true },
         CourseName: { type: String, required: true },
-         Section:{type:String,required:true,
-            enum:['A','B','C','D','E','F','G','H','I','J']
-         },
+         Section:{type:String,required:true, trim:true},
+        department:{type:mongoose.Schema.Types.ObjectId, ref:"Student"}
     },  
     // timming:{type:String,required:true},
     students:[{type:mongoose.Schema.Types.ObjectId,
         ref:"Student",
         required:true
     }],
+    teacher:{type:mongoose.Schema.Types.ObjectId,
+        ref:"Teacher"
+    },
    
 },{timestamps:true})
 export const Course=mongoose.model('Course',CourseSchema);

@@ -5,4 +5,13 @@ import connDb from "./db/index.js";
 dotenv.config({
     path:'./.env'
 });
-connDb();
+const app=express();
+connDb()
+.then(()=>{
+    app.listen(process.env.PORT|| 5000,()=>{
+        console.log(`Server is running on port ${process.env.PORT||5000}`);
+})
+})
+.catch((err)=>{
+    console.error("Failed to connect to the database",err)
+})
