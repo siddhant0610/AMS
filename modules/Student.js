@@ -21,3 +21,4 @@ const Schema=new mongoose.Schema({
 });
 Schema.plugin(mongooseAggregatePaginate)
 export const Student=mongoose.model('Student',Schema); 
+//want jwt/bcrypt?
