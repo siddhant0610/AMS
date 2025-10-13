@@ -18,6 +18,7 @@ const TeacherSchema=new mongoose.Schema({
     password: { type: String, required: true, minlength: 6 },
     employeeId: { type: String, required: true, unique: true },
     department: { type: String, required: true },
+    Sections:{type:mongoose.Schema.Types.ObjectId,ref:'Section'},
     role: { type: String, enum: ['Faculty', 'HOD', 'Admin'], default: 'Faculty' }
 }, { timestamps: true });
 TeacherSchema.plugin(mongooseAggregatePaginate);
