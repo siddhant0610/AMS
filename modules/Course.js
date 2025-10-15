@@ -1,7 +1,7 @@
 import mongoose from "mongoose"
-import { Student } from "./Student";
-import { Teacher } from "./Teacher";
-import { Section } from "./Section";
+import { Student } from "./Student.js";
+import { Teacher } from "./Teacher.js";
+import { Section } from "./Section.js";
 import mongooseAggregatePaginate from "mongoose-aggregate-paginate";
 const CourseSchema=new mongoose.Schema({
     // CourseName:{type:'String',required:true},

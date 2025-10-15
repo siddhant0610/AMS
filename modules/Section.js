@@ -1,7 +1,8 @@
-const mongoose=require('mongoose');
-const { Student}=require('./Student');
-const {Course}=require('./Course');
-// const {Teacher}=require('./Teacher');
+import mongoose from "mongoose";
+import { Student } from "./Student.js";
+import { Course } from "./Course.js";
+ import { Teacher } from "./Teacher.js"; // uncomment when Teacher.js exists
+
 import mongooseAggregatePaginate from 'mongoose-aggregate-paginate';
 const SectionSchema=new mongoose.Schema({
     SectionName:{type:'String',required:true},

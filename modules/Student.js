@@ -1,4 +1,4 @@
-import { Section } from './Section';
+import { Section } from './Section.js';
 import mongoose from "mongoose";
 import mongooseAggregatePaginate from 'mongoose-aggregate-paginate';
 const Schema=new mongoose.Schema({
