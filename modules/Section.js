@@ -27,7 +27,8 @@ const SectionSchema=new mongoose.Schema({
     Teacher: { type: mongoose.Schema.Types.ObjectId, ref: 'Teacher' },// who teaches a particular section and a particular subject
    
     RoomNo: { type: 'String', required: true },
-    Day: { type: [String], enum:['Monday','Tuesday','Wednesday','Thursday','Friday'], required: true },
+    Day: [{ 
+      Day:{type: [String], enum:['Monday','Tuesday','Wednesday','Thursday','Friday'], required: true },
     startTime: {
         type: String, // e.g., "10:00"
         required: true
@@ -36,8 +37,8 @@ const SectionSchema=new mongoose.Schema({
         type: String, // e.g., "11:00"
         required: true
     },
-    completed: { type: Boolean, default: false }
-
-}, { timestamps: true });
+    completed: { type: String, enum:['C','P','NA'] },// C-Completed, P-Pending, NA-Not Applicable
+    }],
+}, { timestamps: false });
 SectionSchema.plugin(mongooseAggregatePaginate);
 export const Section=mongoose.model('Section',SectionSchema);
