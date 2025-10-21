@@ -69,11 +69,13 @@ CourseSchema.virtual('enrolledStudents', {
 CourseSchema.plugin(mongooseAggregatePaginate);
 
 export const Course = mongoose.model('Course', CourseSchema);
-```
 
----
 
-## **Why This Structure?**
+// ```
 
-### **Data Flow:**
-```
+// ---
+
+// ## **Why This Structure?**
+
+// ### **Data Flow:**
+// ```
