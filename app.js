@@ -16,8 +16,10 @@ app.use(express.static('public'));
 import TeacherRoute from './router/Teacher.route.js';
 import StudentRoute from './router/student.route.js';
 import router from './router/sectionRoutes.js';
+import Courserouter from './router/Course.Routes.js';
 // declare routes
 app.use('/api/v1/section',router);
+app.use('/api/v1/course',Courserouter);
 app.use('/api/v1/student', StudentRoute);
 app.use('/api/v1/teacher',TeacherRoute);
 export {app};
