@@ -2,6 +2,7 @@ import { Attendance } from "../modules/Attendance.js";
 import { Section } from "../modules/Section.js";
 import { Student } from "../modules/Student.js";
 import { Course } from "../modules/Course.js";
+
 import { asyncHandler } from "../asyncHandler.js";
 //import { recognizeFace, detectFace } from "../services/faceRecognitionService.js";
 import fs from 'fs';

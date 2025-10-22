@@ -1,5 +1,5 @@
 import express from 'express';
-import { uploadAttendance } from '../multer.middleware.js'; // Your multer file
+import { upload } from '../MiddleWares/multer.js'; // Your multer file
 import {
     CreateAttendanceSession,
     MarkAttendanceWithFace,
@@ -11,44 +11,53 @@ import {
     GetSectionAttendanceReport,
     LockAttendance,
     DeleteAttendanceSession
-} from '../controller/Attendance.Marked.js';
+} from '../controller/Attendence.Marked.js';
 
-const router = express.Router();
+const attendance = express.Router();
 
 // Create attendance session
-router.post('/attendance/session', CreateAttendanceSession);
+attendance.post('/attendance/session', CreateAttendanceSession);
 
 // Mark attendance with face recognition (single image)
-router.patch(
-    '/attendance/:attendanceId/face',
-    uploadAttendance.single('image'),
-    MarkAttendanceWithFace
-);
+// router.patch(
+//     '/attendance/:attendanceId/face',
+//     upload.single('image'),
+//     MarkAttendanceWithFace
+// );
 
 // Bulk mark attendance with multiple faces
-router.patch(
-    '/attendance/:attendanceId/faces',
-    uploadAttendance.array('images', 50),
-    BulkMarkAttendanceWithFaces
-);
+// router.patch(
+//     '/attendance',
+//     upload.array('images', 50),
+//     BulkMarkAttendanceWithFaces
+// );
+ attendance.post('/upload',upload.array('images',5), (req,res)=>{
+     res.json({message:"Files uploaded successfully",files:req.files});
+    const files=req.files;
+    console.log(files);
+   
+
+})
+
+//attendance.route('/upload').post(upload.array('images',5),  MarkAttendanceWithFace);
 
 // Manual bulk mark
-router.patch('/attendance/:attendanceId/bulk', BulkMarkAttendance);
+attendance.patch('/attendance/:attendanceId/bulk', BulkMarkAttendance);
 
 // Get attendance
-router.get('/attendance/:attendanceId', GetAttendanceSession);
-router.get('/attendance', GetAllAttendanceSessions);
+attendance.get('/attendance/:attendanceId', GetAttendanceSession);
+attendance.get('/attendance', GetAllAttendanceSessions);
 
 // Student attendance history
-router.get('/attendance/student/:studentId', GetStudentAttendance);
+attendance.get('/attendance/student/:studentId', GetStudentAttendance);
 
 // Section reports
-router.get('/attendance/section/:sectionId/report', GetSectionAttendanceReport);
+attendance.get('/attendance/section/:sectionId/report', GetSectionAttendanceReport);
 
 // Lock attendance
-router.patch('/attendance/:attendanceId/lock', LockAttendance);
+attendance.patch('/attendance/:attendanceId/lock', LockAttendance);
 
 // Delete
-router.delete('/attendance/:attendanceId', DeleteAttendanceSession);
+attendance.delete('/attendance/:attendanceId', DeleteAttendanceSession);
 
-export default router;
+export default attendance;
