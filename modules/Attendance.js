@@ -69,7 +69,7 @@ const AttendanceSchema = new mongoose.Schema({
         },
         status: {
             type: String,
-            enum: ['present', 'absent', 'late', 'excused'],
+            enum: ['present', 'absent','not-considered'],
             required: true,
             default: 'absent'
         },
@@ -127,8 +127,9 @@ AttendanceSchema.index({ 'students.student': 1, date: 1 });
 // Calculate totals before saving
 AttendanceSchema.pre('save', function(next) {
     if (this.students && this.students.length > 0) {
-        this.totalPresent = this.students.filter(s => s.status === 'present' || s.status === 'late').length;
+        this.totalPresent = this.students.filter(s => s.status === 'present').length;
         this.totalAbsent = this.students.filter(s => s.status === 'absent').length;
+        this.totalNotConsidered = this.students.filter(s => s.status === 'not-considered').length;
         const total = this.students.length;
         this.attendancePercentage = total > 0 ? Math.round((this.totalPresent / total) * 100) : 0;
     }

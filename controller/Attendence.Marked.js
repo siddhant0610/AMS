@@ -28,11 +28,16 @@ const CreateAttendanceSession = asyncHandler(async (req, res) => {
             message: "Required fields: sectionId, courseId, teacherId, date, startTime, endTime, day"
         });
     }
-
+// const updatedDate= new Date(date-1);
+// if(date==Date){
+//     return res.status(404).json({
+//         success:false,
+//         message:"Marked attendance already"
+//     })
     // Check if attendance already exists for this session
-    const existing = await Attendance.findOne({
+    const existing = await Attendance.findOneAndUpdate({
         section: sectionId,
-        date: new Date(date),
+        date: Date,
         startTime,
         endTime
     });
@@ -46,7 +51,7 @@ const CreateAttendanceSession = asyncHandler(async (req, res) => {
     }
 
     // Get all students in the section
-    const section = await Section.findById(sectionId).populate('Student.Reg_No');
+    const section = await Section.findById(sectionId).populate(Student.regNo);
     
     if (!section) {
         return res.status(404).json({
@@ -57,7 +62,7 @@ const CreateAttendanceSession = asyncHandler(async (req, res) => {
 
     // Initialize all students as absent
     const students = section.Student.map(s => ({
-        student: s.Reg_No._id,
+        student: s.regNo._id,
         status: 'absent',
         markedAt: new Date()
     }));
@@ -71,7 +76,7 @@ const CreateAttendanceSession = asyncHandler(async (req, res) => {
         startTime,
         endTime,
         day,
-        roomNo: roomNo || section.RoomNo,
+        roomNo: roomNo || Section.RoomNo,
         topic,
         students
     });
