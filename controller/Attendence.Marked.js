@@ -7,7 +7,16 @@ import { asyncHandler } from "../asyncHandler.js";
 //import { recognizeFace, detectFace } from "../services/faceRecognitionService.js";
 import fs from 'fs';
 import path from 'path';
-
+import { set } from "mongoose";
+// file cleanup
+const attendanceSessionCleanup= asyncHandler(async(filePath,delayHours=24)=>{
+    setTimeout(()=>{
+        if(fs.existsSync(filePath)){
+            fs.unlinkSync(filePath);
+            console.log(`Cleaned up file: ${filePath}`);
+        }
+    },delayHours*60*60*1000);
+});
 // Create new attendance session
 const CreateAttendanceSession = asyncHandler(async (req, res) => {
     const {
@@ -106,7 +115,7 @@ const MarkAttendanceWithFace = asyncHandler(async (req, res) => {
             message: "No image file uploaded"
         });
     }
-
+    
     const attendance = await Attendance.findById(attendanceId).populate('section');
     
     if (!attendance) {
@@ -129,7 +138,7 @@ const MarkAttendanceWithFace = asyncHandler(async (req, res) => {
             message: "Attendance is locked and cannot be modified"
         });
     }
-
+    
     try {
         // Step 1: Detect if face exists in image
         const detection = await detectFace(req.file.path);
@@ -143,6 +152,7 @@ const MarkAttendanceWithFace = asyncHandler(async (req, res) => {
                 message: "No clear face detected in image"
             });
         }
+        attendanceSessionCleanup(req.file.path,24);
 
         // Step 2: Recognize face
         const recognition = await recognizeFace(req.file.path, { 
