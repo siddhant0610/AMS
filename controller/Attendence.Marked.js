@@ -127,7 +127,7 @@ const CreateAttendanceSession = asyncHandler(async (req, res) => {
     }
 
     // Get section with students
-    const section = await Section.findById(sectionId).populate('students');
+    const section = await Section.findById(sectionId).populate('Student');
 
     if (!section) {
         return res.status(404).json({
@@ -240,7 +240,7 @@ const MarkAttendanceWithFace = asyncHandler(async (req, res) => {
         console.log('Recognizing face...');
         const recognition = await retryWithBackoff(() =>
             recognizeFace(req.file.path, {
-                sectionId: sectionId || attendance.section._id.toString()
+                sectionId: SectionName || attendance.section._id.toString()
             })
         );
 
@@ -475,10 +475,10 @@ const BulkMarkAttendance = asyncHandler(async (req, res) => {
     const { attendanceId } = req.params;
     const { status, studentIds, remarks } = req.body;
 
-    if (!status || !['present', 'absent', 'late', 'excused'].includes(status)) {
+    if (!status || !['present', 'absent', 'not-considered'].includes(status)) {
         return res.status(400).json({
             success: false,
-            message: "Valid status required: present, absent, late, excused"
+            message: "Valid status required: present,absent,not-considered "
         });
     }
 

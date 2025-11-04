@@ -16,18 +16,18 @@ import {
 const attendance = express.Router();
 
 // Create attendance session
-attendance.post('/attendance/session', CreateAttendanceSession);
+attendance.post('/create', CreateAttendanceSession);
 
 // Mark attendance with face recognition (single image)
 // router.patch(
-//     '/attendance/:attendanceId/face',
+//     '/:attendanceId/face',
 //     upload.single('image'),
 //     MarkAttendanceWithFace
 // );
 
 // Bulk mark attendance with multiple faces
 // router.patch(
-//     '/attendance',
+//     '',
 //     upload.array('images', 50),
 //     BulkMarkAttendanceWithFaces
 // );
@@ -42,22 +42,22 @@ attendance.post('/attendance/session', CreateAttendanceSession);
 //attendance.route('/upload').post(upload.array('images',5),  MarkAttendanceWithFace);
 
 // Manual bulk mark
-attendance.patch('/attendance/:attendanceId/bulk', BulkMarkAttendance);
+attendance.patch('/:attendanceId/bulk', BulkMarkAttendance);
 
 // Get attendance
-attendance.get('/attendance/:attendanceId', GetAttendanceSession);
-attendance.get('/attendance', GetAllAttendanceSessions);
+attendance.get('/:attendanceId', GetAttendanceSession);
+attendance.get('/', GetAllAttendanceSessions);
 
 // Student attendance history
-attendance.get('/attendance/student/:studentId', GetStudentAttendance);
+attendance.get('/student/:studentId', GetStudentAttendance);
 
 // Section reports
-attendance.get('/attendance/section/:sectionId/report', GetSectionAttendanceReport);
+attendance.get('/section/:sectionId/report', GetSectionAttendanceReport);
 
 // Lock attendance
-attendance.patch('/attendance/:attendanceId/lock', LockAttendance);
+attendance.patch('/:attendanceId/lock', LockAttendance);
 
 // Delete
-attendance.delete('/attendance/:attendanceId', DeleteAttendanceSession);
+attendance.delete('/:attendanceId', DeleteAttendanceSession);
 
 export default attendance;
