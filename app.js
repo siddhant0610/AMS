@@ -16,6 +16,7 @@ app.use(express.static('public'));
 import TeacherRoute from './router/Teacher.route.js';
 import StudentRoute from './router/student.route.js';
 import router from './router/sectionRoutes.js';
+import Courserouter from './router/Course.Routes.js';
 import attendance from './router/attendence.routes.js';
 // declare routes
 app.use('/api/v1/section',router);

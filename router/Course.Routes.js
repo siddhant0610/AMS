@@ -9,12 +9,12 @@ import {
     AddSectionToCourse,
     GetCourseStudents,
     GetCourseStats
-} from '../controller/CourseController.js';
+} from '../controller/Course.controller.js';
 
 const Courserouter = express.Router();
 
 // Basic CRUD
-Courserouter.post('/courses', CreateCourse);
+Courserouter.post('/', CreateCourse);
 Courserouter.get('/courses', GetAllCourses);
 Courserouter.get('/courses/:id', GetCourse);
 Courserouter.get('/courses/code/:courseCode', GetCourseByCode);
