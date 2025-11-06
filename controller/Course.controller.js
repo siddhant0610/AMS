@@ -7,7 +7,6 @@ import { asyncHandler } from "../asyncHandler.js";
    ✅ CREATE COURSE
 ======================================================== */
 const CreateCourse = asyncHandler(async (req, res) => {
-  // Ensure body is defined
   if (!req.body || Object.keys(req.body).length === 0) {
     return res.status(400).json({
       success: false,
@@ -15,7 +14,6 @@ const CreateCourse = asyncHandler(async (req, res) => {
     });
   }
 
-  // Support both camelCase & PascalCase keys
   const courseCode =
     req.body.courseCode?.trim().toUpperCase() ||
     req.body.CourseCode?.trim().toUpperCase();
@@ -25,19 +23,16 @@ const CreateCourse = asyncHandler(async (req, res) => {
   const credits = req.body.credits;
   const semester = req.body.semester;
   const description = req.body.description || "";
-  const primaryTeacher = req.body.primaryTeacher;
+  const teachers = req.body.teachers || []; // ✅ supports multiple teachers now
 
-  // Validation
   if (!courseCode || !CourseName || !department || !credits || !semester) {
     return res.status(400).json({
       success: false,
       message:
         "Missing required fields. Please provide: courseCode, CourseName, department, credits, semester",
-      received: req.body,
     });
   }
 
-  // Check duplicates
   const existing = await Course.findOne({ courseCode });
   if (existing) {
     return res.status(409).json({
@@ -46,7 +41,6 @@ const CreateCourse = asyncHandler(async (req, res) => {
     });
   }
 
-  // Create course
   const created = await Course.create({
     courseCode,
     CourseName,
@@ -54,12 +48,12 @@ const CreateCourse = asyncHandler(async (req, res) => {
     credits,
     semester,
     description,
-    primaryTeacher,
+    teachers,
   });
 
   const populated = await Course.findById(created._id)
     .populate("sections", "SectionName Teacher RoomNo")
-    .populate("primaryTeacher", "name email department");
+    .populate("teachers", "name email department");
 
   return res.status(201).json({
     success: true,
@@ -69,7 +63,7 @@ const CreateCourse = asyncHandler(async (req, res) => {
 });
 
 /* ========================================================
-   ✅ GET ALL COURSES (with pagination + filters)
+   ✅ GET ALL COURSES
 ======================================================== */
 const GetAllCourses = asyncHandler(async (req, res) => {
   const { page = 1, limit = 10, department, semester, isActive } = req.query;
@@ -87,7 +81,7 @@ const GetAllCourses = asyncHandler(async (req, res) => {
 
   const courses = await Course.find(filter)
     .populate("sections", "SectionName Teacher RoomNo")
-    .populate("primaryTeacher", "name email")
+    .populate("teachers", "name email")
     .limit(options.limit)
     .skip((options.page - 1) * options.limit)
     .sort(options.sort);
@@ -111,6 +105,7 @@ const GetAllCourses = asyncHandler(async (req, res) => {
 ======================================================== */
 const GetCourse = asyncHandler(async (req, res) => {
   const { id } = req.params;
+
   const course = await Course.findById(id)
     .populate({
       path: "sections",
@@ -119,11 +114,10 @@ const GetCourse = asyncHandler(async (req, res) => {
         { path: "Teacher", select: "name email" },
       ],
     })
-    .populate("primaryTeacher", "name email department");
+    .populate("teachers", "name email department");
 
-  if (!course) {
+  if (!course)
     return res.status(404).json({ success: false, message: "Course not found" });
-  }
 
   return res.status(200).json({ success: true, data: course });
 });
@@ -144,11 +138,10 @@ const GetCourseByCode = asyncHandler(async (req, res) => {
         { path: "Teacher", select: "name email" },
       ],
     })
-    .populate("primaryTeacher", "name email department");
+    .populate("teachers", "name email department");
 
-  if (!course) {
+  if (!course)
     return res.status(404).json({ success: false, message: "Course not found" });
-  }
 
   return res.status(200).json({ success: true, data: course });
 });
@@ -176,7 +169,7 @@ const UpdateCourse = asyncHandler(async (req, res) => {
     runValidators: true,
   })
     .populate("sections", "SectionName Teacher RoomNo")
-    .populate("primaryTeacher", "name email");
+    .populate("teachers", "name email");
 
   return res.status(200).json({
     success: true,
@@ -246,7 +239,7 @@ const AddSectionToCourse = asyncHandler(async (req, res) => {
 
   const updated = await Course.findById(id)
     .populate("sections", "SectionName Teacher RoomNo")
-    .populate("primaryTeacher", "name email");
+    .populate("teachers", "name email");
 
   return res.status(200).json({
     success: true,
