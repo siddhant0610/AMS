@@ -3,369 +3,312 @@ import { Student } from "../modules/Student.js";
 import { Course } from "../modules/Course.js";
 import { Teacher } from "../modules/Teacher.js";
 import { asyncHandler } from "../asyncHandler.js";
+import mongoose from "mongoose";
 
-// Create a new section
-const CreateSection = asyncHandler(async (req, res) => {
-    const { SectionName, Student: students, Course, Teacher, RoomNo, Day } = req.body;
-    
-    // Validate required fields
-    if (!SectionName || !RoomNo || !Day || !Array.isArray(Day) || Day.length === 0) {
-        return res.status(400).json({
-            success: false,
-            message: "Please provide all required fields: SectionName, RoomNo, Day (array of schedule objects)"
-        });
+// ✅ Create a new section
+export const CreateSection = asyncHandler(async (req, res) => {
+  const { SectionName, Student: students, Course: courseId, Teacher: teacherId, RoomNo, Day } = req.body;
+
+  // Validate fields
+  if (!SectionName || !RoomNo || !Day || !Array.isArray(Day) || Day.length === 0) {
+    return res.status(400).json({
+      success: false,
+      message: "Required fields: SectionName, RoomNo, and Day (array of schedule objects)"
+    });
+  }
+
+  // Validate Day time format
+  const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+  for (const schedule of Day) {
+    if (!schedule.Day || !schedule.startTime || !schedule.endTime) {
+      return res.status(400).json({
+        success: false,
+        message: "Each schedule must include Day, startTime, and endTime"
+      });
     }
+    if (!timeRegex.test(schedule.startTime) || !timeRegex.test(schedule.endTime)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid time format. Use HH:MM (e.g., 09:30)"
+      });
+    }
+  }
 
-    // Validate each time slot
+  // Validate referenced entities
+  const course = await Course.findById(courseId);
+  const teacher = await Teacher.findById(teacherId);
+  if (!course || !teacher) {
+    return res.status(404).json({
+      success: false,
+      message: "Invalid Course or Teacher reference"
+    });
+  }
+
+  // Create Section
+  const createdSection = await Section.create({
+    SectionName,
+    Student: students || [],
+    Course: courseId,
+    Teacher: teacherId,
+    RoomNo,
+    Day
+  });
+
+  // ✅ Auto-sync for all linked students
+  if (students && students.length > 0) {
+    await Student.updateMany(
+      { _id: { $in: students.map((s) => s.Reg_No) } },
+      {
+        $push: {
+          enrolledCourses: {
+            course: courseId,
+            section: createdSection._id
+          }
+        }
+      }
+    );
+  }
+
+  const populated = await Section.findById(createdSection._id)
+    .populate("Student.Reg_No", "name regNo email")
+    .populate("Course", "courseName courseCode")
+    .populate("Teacher", "name email");
+
+  return res.status(201).json({
+    success: true,
+    message: "Section created successfully",
+    data: populated
+  });
+});
+
+// ✅ Get all sections
+export const GetAllSections = asyncHandler(async (req, res) => {
+  const { page = 1, limit = 10, day, completed } = req.query;
+
+  const filter = {};
+  if (day) filter["Day.Day"] = day;
+  if (completed !== undefined) filter["Day.completed"] = completed === "true";
+
+  const sections = await Section.find(filter)
+    .populate("Student.Reg_No", "name regNo email")
+    .populate("Course", "courseName courseCode")
+    .populate("Teacher", "name email")
+    .limit(parseInt(limit))
+    .skip((page - 1) * parseInt(limit))
+    .sort({ createdAt: -1 });
+
+  const total = await Section.countDocuments(filter);
+
+  return res.status(200).json({
+    success: true,
+    data: sections,
+    pagination: {
+      total,
+      page: parseInt(page),
+      limit: parseInt(limit),
+      totalPages: Math.ceil(total / limit)
+    }
+  });
+});
+
+// ✅ Get section by ID
+export const GetSection = asyncHandler(async (req, res) => {
+  const section = await Section.findById(req.params.id)
+    .populate("Student.Reg_No", "name regNo email department Semester")
+    .populate("Course", "courseName courseCode credits")
+    .populate("Teacher", "name email department");
+
+  if (!section) {
+    return res.status(404).json({
+      success: false,
+      message: "Section not found"
+    });
+  }
+
+  return res.status(200).json({ success: true, data: section });
+});
+
+// ✅ Update section
+export const UpdateSection = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const section = await Section.findById(id);
+  if (!section)
+    return res.status(404).json({ success: false, message: "Section not found" });
+
+  // Validate Day array if present
+  if (req.body.Day && Array.isArray(req.body.Day)) {
     const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
-    for (const schedule of Day) {
-        if (!schedule.Day || !schedule.startTime || !schedule.endTime) {
-            return res.status(400).json({
-                success: false,
-                message: "Each schedule must have Day, startTime, and endTime"
-            });
-        }
-        
-        if (!timeRegex.test(schedule.startTime) || !timeRegex.test(schedule.endTime)) {
-            return res.status(400).json({
-                success: false,
-                message: "Invalid time format. Use HH:MM format (e.g., 10:00)"
-            });
-        }
-    }
-
-    // Create the section
-    const created = await Section.create(req.body);
-
-    // Populate references
-    const populatedSection = await Section.findById(created._id)
-        .populate('Student.Reg_No', 'name regNo email')
-        .populate('Course', 'courseName courseCode')
-        .populate('Teacher', 'name email');
-
-    res.status(201).json({
-        success: true,
-        message: "Section created successfully",
-        data: populatedSection
-    });
-});
-
-// Get all sections with pagination
-const GetAllSections = asyncHandler(async (req, res) => {
-    const { page = 1, limit = 10, day, completed } = req.query;
-
-    // Build filter
-    const filter = {};
-    if (day) filter['Day.Day'] = day;
-    if (completed !== undefined) filter['Day.completed'] = completed === 'true';
-
-    const options = {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        populate: [
-            { path: 'Student.Reg_No', select: 'name regNo email' },
-            { path: 'Course', select: 'courseName courseCode' },
-            { path: 'Teacher', select: 'name email' }
-        ],
-        sort: { createdAt: -1 }
-    };
-
-    const sections = await Section.find(filter)
-        .populate('Student.Reg_No', 'name regNo email')
-        .populate('Course', 'courseName courseCode')
-        .populate('Teacher', 'name email')
-        .limit(options.limit)
-        .skip((options.page - 1) * options.limit)
-        .sort(options.sort);
-
-    const total = await Section.countDocuments(filter);
-
-    res.status(200).json({
-        success: true,
-        data: sections,
-        pagination: {
-            total,
-            page: options.page,
-            limit: options.limit,
-            totalPages: Math.ceil(total / options.limit)
-        }
-    });
-});
-
-// Get a single section by ID
-const GetSection = asyncHandler(async (req, res) => {
-    const { id } = req.params;
-
-    const section = await Section.findById(id)
-        .populate('Student.Reg_No', 'name regNo email course department Semester')
-        .populate('Course', 'courseName courseCode credits')
-        .populate('Teacher', 'name email department');
-
-    if (!section) {
-        return res.status(404).json({
-            success: false,
-            message: "Section not found"
-        });
-    }
-
-    res.status(200).json({
-        success: true,
-        data: section
-    });
-});
-
-// Update a section
-const UpdateSection = asyncHandler(async (req, res) => {
-    const { id } = req.params;
-
-    // Check if section exists
-    const section = await Section.findById(id);
-    if (!section) {
-        return res.status(404).json({
-            success: false,
-            message: "Section not found"
-        });
-    }
-
-    // Validate time slots if Day array is being updated
-    if (req.body.Day && Array.isArray(req.body.Day)) {
-        const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
-        for (const schedule of req.body.Day) {
-            if (schedule.startTime && !timeRegex.test(schedule.startTime)) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Invalid time format. Use HH:MM format"
-                });
-            }
-            if (schedule.endTime && !timeRegex.test(schedule.endTime)) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Invalid time format. Use HH:MM format"
-                });
-            }
-        }
-    }
-
-    // Update the section
-    const updated = await Section.findByIdAndUpdate(
-        id,
-        req.body,
-        { new: true, runValidators: true }
-    )
-        .populate('Student.Reg_No', 'name regNo email')
-        .populate('Course', 'courseName courseCode')
-        .populate('Teacher', 'name email');
-
-    res.status(200).json({
-        success: true,
-        message: "Section updated successfully",
-        data: updated
-    });
-});
-
-// Delete a section
-const DeleteSection = asyncHandler(async (req, res) => {
-    const { id } = req.params;
-
-    const section = await Section.findByIdAndDelete(id);
-
-    if (!section) {
-        return res.status(404).json({
-            success: false,
-            message: "Section not found"
-        });
-    }
-
-    res.status(200).json({
-        success: true,
-        message: "Section deleted successfully",
-        data: section
-    });
-});
-
-// Add student to section
-const AddStudentToSection = asyncHandler(async (req, res) => {
-    const { id } = req.params;
-    const { studentId } = req.body;
-
-    if (!studentId) {
+    for (const d of req.body.Day) {
+      if ((d.startTime && !timeRegex.test(d.startTime)) || (d.endTime && !timeRegex.test(d.endTime))) {
         return res.status(400).json({
-            success: false,
-            message: "Student ID is required"
+          success: false,
+          message: "Invalid time format. Use HH:MM"
         });
+      }
     }
+  }
 
-    // Check if student exists
-    const student = await Student.findById(studentId);
-    if (!student) {
-        return res.status(404).json({
-            success: false,
-            message: "Student not found"
-        });
-    }
+  const updated = await Section.findByIdAndUpdate(id, req.body, {
+    new: true,
+    runValidators: true
+  })
+    .populate("Student.Reg_No", "name regNo email")
+    .populate("Course", "courseName courseCode")
+    .populate("Teacher", "name email");
 
-    // Check if section exists
-    const section = await Section.findById(id);
-    if (!section) {
-        return res.status(404).json({
-            success: false,
-            message: "Section not found"
-        });
-    }
-
-    // Check if student already in section
-    const studentExists = section.Student.some(
-        s => s.Reg_No.toString() === studentId
-    );
-
-    if (studentExists) {
-        return res.status(409).json({
-            success: false,
-            message: "Student already enrolled in this section"
-        });
-    }
-
-    // Add student
-    section.Student.push({
-        Reg_No: studentId,
-        attendance: false
-    });
-
-    await section.save();
-
-    const updatedSection = await Section.findById(id)
-        .populate('Student.Reg_No', 'name regNo email')
-        .populate('Course', 'courseName courseCode')
-        .populate('Teacher', 'name email');
-
-    res.status(200).json({
-        success: true,
-        message: "Student added to section successfully",
-        data: updatedSection
-    });
+  return res.status(200).json({
+    success: true,
+    message: "Section updated successfully",
+    data: updated
+  });
 });
 
-// Remove student from section
-const RemoveStudentFromSection = asyncHandler(async (req, res) => {
-    const { id, studentId } = req.params;
+// ✅ Delete section
+export const DeleteSection = asyncHandler(async (req, res) => {
+  const section = await Section.findByIdAndDelete(req.params.id);
+  if (!section)
+    return res.status(404).json({ success: false, message: "Section not found" });
 
-    const section = await Section.findById(id);
-    if (!section) {
-        return res.status(404).json({
-            success: false,
-            message: "Section not found"
-        });
-    }
+  // Remove section from students' enrolledCourses
+  await Student.updateMany(
+    { "enrolledCourses.section": section._id },
+    { $pull: { enrolledCourses: { section: section._id } } }
+  );
 
-    // Remove student
-    section.Student = section.Student.filter(
-        s => s.Reg_No.toString() !== studentId
-    );
-
-    await section.save();
-
-    const updatedSection = await Section.findById(id)
-        .populate('Student.Reg_No', 'name regNo email')
-        .populate('Course', 'courseName courseCode')
-        .populate('Teacher', 'name email');
-
-    res.status(200).json({
-        success: true,
-        message: "Student removed from section successfully",
-        data: updatedSection
-    });
+  return res.status(200).json({
+    success: true,
+    message: "Section deleted successfully",
+    data: section
+  });
 });
 
-// Mark attendance for a student in a section
-const MarkAttendance = asyncHandler(async (req, res) => {
-    const { id, studentId } = req.params;
-    const { attendance } = req.body;
+// ✅ Add student to section
+export const AddStudentToSection = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { studentId } = req.body;
 
-    if (attendance === undefined) {
-        return res.status(400).json({
-            success: false,
-            message: "Attendance status (true/false) is required"
-        });
-    }
+  const section = await Section.findById(id).populate("Course");
+  const student = await Student.findById(studentId);
 
-    const section = await Section.findById(id);
-    if (!section) {
-        return res.status(404).json({
-            success: false,
-            message: "Section not found"
-        });
-    }
-
-    // Find and update student attendance
-    const studentIndex = section.Student.findIndex(
-        s => s.Reg_No.toString() === studentId
-    );
-
-    if (studentIndex === -1) {
-        return res.status(404).json({
-            success: false,
-            message: "Student not found in this section"
-        });
-    }
-
-    section.Student[studentIndex].attendance = attendance;
-    await section.save();
-
-    const updatedSection = await Section.findById(id)
-        .populate('Student.Reg_No', 'name regNo email')
-        .populate('Course', 'courseName courseCode')
-        .populate('Teacher', 'name email');
-
-    res.status(200).json({
-        success: true,
-        message: "Attendance marked successfully",
-        data: updatedSection
+  if (!section || !student) {
+    return res.status(404).json({
+      success: false,
+      message: "Section or Student not found"
     });
+  }
+
+  const alreadyExists = section.Student.some(
+    (s) => s.Reg_No.toString() === studentId
+  );
+
+  if (alreadyExists)
+    return res.status(400).json({
+      success: false,
+      message: "Student already enrolled in this section"
+    });
+
+  section.Student.push({ Reg_No: studentId });
+  await section.save();
+
+  // Add to student's enrolledCourses
+  await Student.findByIdAndUpdate(studentId, {
+    $addToSet: {
+      enrolledCourses: {
+        course: section.Course._id,
+        section: section._id
+      }
+    }
+  });
+
+  const updated = await Section.findById(id)
+    .populate("Student.Reg_No", "name regNo email")
+    .populate("Course", "courseName courseCode")
+    .populate("Teacher", "name email");
+
+  return res.status(200).json({
+    success: true,
+    message: "Student added successfully",
+    data: updated
+  });
 });
 
-// Mark section schedule as completed
-const MarkSectionCompleted = asyncHandler(async (req, res) => {
-    const { id, scheduleIndex } = req.params;
+// ✅ Remove student from section
+export const RemoveStudentFromSection = asyncHandler(async (req, res) => {
+  const { id, studentId } = req.params;
 
-    const section = await Section.findById(id);
-    
-    if (!section) {
-        return res.status(404).json({
-            success: false,
-            message: "Section not found"
-        });
-    }
+  const section = await Section.findById(id);
+  if (!section)
+    return res.status(404).json({ success: false, message: "Section not found" });
 
-    if (!section.Day[scheduleIndex]) {
-        return res.status(404).json({
-            success: false,
-            message: "Schedule not found"
-        });
-    }
+  section.Student = section.Student.filter(
+    (s) => s.Reg_No.toString() !== studentId
+  );
+  await section.save();
 
-    section.Day[scheduleIndex].completed = true;
-    await section.save();
+  // Remove from student's enrolledCourses
+  await Student.findByIdAndUpdate(studentId, {
+    $pull: { enrolledCourses: { section: section._id } }
+  });
 
-    const updatedSection = await Section.findById(id)
-        .populate('Student.Reg_No', 'name regNo email')
-        .populate('Course', 'courseName courseCode')
-        .populate('Teacher', 'name email');
+  const updated = await Section.findById(id)
+    .populate("Student.Reg_No", "name regNo email")
+    .populate("Course", "courseName courseCode")
+    .populate("Teacher", "name email");
 
-    res.status(200).json({
-        success: true,
-        message: "Schedule marked as completed",
-        data: updatedSection
-    });
+  return res.status(200).json({
+    success: true,
+    message: "Student removed from section successfully",
+    data: updated
+  });
 });
 
-export {
-    CreateSection,
-    GetAllSections,
-    GetSection,
-    UpdateSection,
-    DeleteSection,
-    AddStudentToSection,
-    RemoveStudentFromSection,
-    MarkAttendance,
-    MarkSectionCompleted
-};
+// ✅ Mark attendance for a student
+export const MarkAttendance = asyncHandler(async (req, res) => {
+  const { id, studentId } = req.params;
+  const { attendance } = req.body;
+
+  const section = await Section.findById(id);
+  if (!section)
+    return res.status(404).json({ success: false, message: "Section not found" });
+
+  const student = section.Student.find((s) => s.Reg_No.toString() === studentId);
+  if (!student)
+    return res.status(404).json({
+      success: false,
+      message: "Student not found in this section"
+    });
+
+  student.attendance = attendance;
+  await section.save();
+
+  return res.status(200).json({
+    success: true,
+    message: "Attendance updated successfully",
+    data: section
+  });
+});
+
+// ✅ Mark section schedule completed
+export const MarkSectionCompleted = asyncHandler(async (req, res) => {
+  const { id, scheduleIndex } = req.params;
+
+  const section = await Section.findById(id);
+  if (!section)
+    return res.status(404).json({ success: false, message: "Section not found" });
+
+  if (!section.Day[scheduleIndex]) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid schedule index"
+    });
+  }
+
+  section.Day[scheduleIndex].completed = true;
+  await section.save();
+
+  return res.status(200).json({
+    success: true,
+    message: "Schedule marked as completed",
+    data: section
+  });
+});
