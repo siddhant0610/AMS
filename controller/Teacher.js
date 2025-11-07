@@ -9,7 +9,7 @@ import { asyncHandler } from "../asyncHandler.js";
  * - Prevents duplicate email/employeeId
  * - Syncs with Section and Course collections
  */
-export const addTeacher = asyncHandler(async (req, res) => {
+const addTeacher = asyncHandler(async (req, res) => {
   const {
     name,
     email,
@@ -89,5 +89,49 @@ export const addTeacher = asyncHandler(async (req, res) => {
     data: populated,
   });
 });
+const getTeacherByEmail = asyncHandler(async (req, res) => {
+  const { email } = req.params || {};
+
+  // Validate input
+  if (!email) {
+    return res.status(400).json({
+      success: false,
+      message: "Email parameter is required in the URL.",
+    });
+  }
+
+  // Case-insensitive email search
+  const teacher = await Teacher.findOne({
+    email: { $regex: new RegExp(`^${email}$`, "i") },
+  })
+    .populate({
+      path: "sections",
+      select: "SectionName RoomNo Course",
+      populate: { path: "Course", select: "CourseName courseCode" },
+    })
+    .populate({
+      path: "courses",
+      select: "CourseName courseCode department semester",
+    });
+
+  // Handle not found
+  if (!teacher) {
+    return res.status(404).json({
+      success: false,
+      message: `No teacher found with email: ${email}`,
+    });
+  }
+
+  // Respond
+  return res.status(200).json({
+    success: true,
+    message: "Teacher fetched successfully",
+    data: teacher,
+  });
+});
+export { 
+          addTeacher,
+          getTeacherByEmail
+ };
 
 // ... (Your other controller functions like getTeacher, updateTeacher, etc.)
