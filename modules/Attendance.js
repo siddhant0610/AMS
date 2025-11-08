@@ -50,11 +50,6 @@ const AttendanceSchema = new mongoose.Schema({
     },
     
     // Room where class was held
-    roomNo: {
-        type: String,
-        required: true
-    },
-    
     // Topic covered in class (optional)
     topic: {
         type: String
