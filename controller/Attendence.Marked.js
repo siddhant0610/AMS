@@ -3,7 +3,7 @@ import path from 'path';
 import mongoose from 'mongoose';
 import { fileURLToPath } from 'url';
 import { asyncHandler } from '../asyncHandler.js';
-import { detectFace, recognizeFace, generateAttendanceReport } from '../Services/faceRecognition.js';
+import { detectFace, recognizeFace, generateAttendanceReport, enrollStudentFace } from '../Services/faceRecognition.js';
 import { Attendance } from '../modules/Attendance.js';
 import { Section } from '../modules/Section.js';
 import { Student } from '../modules/Student.js';
@@ -74,6 +74,7 @@ export const MarkAttendanceWithFace = asyncHandler(async (req, res) => {
   for (const file of files) {
     const detection = await detectFace(file.path);
     if (!detection.success || !detection.faceDetected) continue;
+    console.log(`Faces detected ${detection.faceCount} in image ${file.originalname}`);
 
     // Pass the sectionId we just derived from DB
     const recognition = await recognizeFace(file.path, { sectionId });

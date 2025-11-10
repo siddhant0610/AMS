@@ -1,17 +1,18 @@
 import axios from 'axios';
 import fs from 'fs';
 import FormData from 'form-data';
+import sharp from 'sharp';
 import { Student } from '../modules/Student.js';
 import { Section } from '../modules/Section.js';
 
 // Configuration - Your Hugging Face API URLs (confirmed working)
-const FACE_DETECTION_API = process.env.FACE_DETECTION_API || 'https://adiml1-face-detection-api.hf.space';
-const FACE_RECOGNITION_API = process.env.FACE_RECOGNITION_API || 'https://adiml1-face-recognition-api.hf.space';
-const REPORT_GENERATION_API = process.env.REPORT_GENERATION_API || 'https://adiml1-report-generation-api.hf.space';
+const FACE_DETECTION_API = process.env.FACE_DETECTION_API;
+const FACE_RECOGNITION_API = process.env.FACE_RECOGNITION_API;
+const REPORT_GENERATION_API = process.env.REPORT_GENERATION_API;
 const HUGGINGFACE_TOKEN = process.env.HUGGINGFACE_TOKEN; // Optional for public spaces
 const API_TIMEOUT = parseInt(process.env.API_TIMEOUT) || 30000;
-const MAX_RETRIES = 3;
-const RETRY_DELAY = 2000;
+const MAX_RETRIES = 5;
+const RETRY_DELAY = 1000;
 
 // Validate configuration
 // if (!HUGGINGFACE_TOKEN) {
@@ -42,9 +43,12 @@ export const detectFace = async (imagePath) => {
         if (!fs.existsSync(imagePath)) {
             return { success: false, faceDetected: false, error: 'Image file not found' };
         }
+        
+    const resizedPath = imagePath.replace(/(\.\w+)$/, "_resized$1");
 
+    await sharp(imagePath).resize(1280, 1280).toFile(resizedPath);
         const formData = new FormData();
-        formData.append('file', fs.createReadStream(imagePath));
+        formData.append('file', fs.createReadStream(resizedPath));
 
         const headers = { ...formData.getHeaders() };
         if (HUGGINGFACE_TOKEN) headers['Authorization'] = `Bearer ${HUGGINGFACE_TOKEN}`;
