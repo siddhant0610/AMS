@@ -18,10 +18,10 @@ import StudentRoute from './router/student.route.js';
 import router from './router/sectionRoutes.js';
 import Courserouter from './router/Course.Routes.js';
 import attendance from './router/attendence.routes.js';
-import AdminRoute from './router/Admin.routes.js';
+//import AdminRoute from './router/Admin.routes.js';
 // declare routes
 app.use('/api/v1/section',router);
-app.use('/api/v1/admin',AdminRoute);
+//app.use('/api/v1/admin',AdminRoute);
 app.use('/api/v1/course',Courserouter);
 app.use('/api/v1/student', StudentRoute);
 app.use('/api/v1/teacher',TeacherRoute);
