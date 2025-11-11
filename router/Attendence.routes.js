@@ -1,63 +1,63 @@
-import express from 'express';
-import { upload } from '../MiddleWares/multer.js'; // Your multer file
+import express from "express";
+import multer from "multer";
+import path from "path";
+import { fileURLToPath } from "url";
+
 import {
-    CreateAttendanceSession,
-    MarkAttendanceWithFace,
-    BulkMarkAttendanceWithFaces,
-    BulkMarkAttendance,
-    GetAttendanceSession,
-    GetAllAttendanceSessions,
-    GetStudentAttendance,
-    GetSectionAttendanceReport,
-    LockAttendance,
-    DeleteAttendanceSession
-} from '../controller/Attendence.Marked.js';
+  CreateAttendanceSession,
+  MarkAttendanceWithFace,
+  AttendanceReport,
+} from "../controller/Attendence.Marked.js";
 
-const attendance = express.Router();
+const router = express.Router();
 
-// Create attendance session
-attendance.post('/create', CreateAttendanceSession);
+// --------------------
+// 🔹 FILE UPLOAD SETUP
+// --------------------
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-// Mark attendance with face recognition (single image)
-// router.patch(
-//     '/:attendanceId/face',
-//     upload.single('image'),
-//     MarkAttendanceWithFace
-// );
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, path.join(__dirname, "../../public/temp"));
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  },
+});
 
-// Bulk mark attendance with multiple faces
-// router.patch(
-//     '',
-//     upload.array('images', 50),
-//     BulkMarkAttendanceWithFaces
-// );
- attendance.post('/upload',upload.array('images',5), (req,res)=>{
-     res.json({message:"Files uploaded successfully",files:req.files});
-    const files=req.files;
-    console.log(files);
-   
+const upload = multer({
+  storage,
+  limits: { fileSize: 8 * 1024 * 1024 }, // 8MB max
+  fileFilter: (req, file, cb) => {
+    const allowed = ["image/jpeg", "image/png", "image/jpg"];
+    if (!allowed.includes(file.mimetype)) {
+      return cb(new Error("Only JPG and PNG images are allowed"));
+    }
+    cb(null, true);
+  },
+});
 
-})
+// Ensure temp folder exists
+import fs from "fs";
+const TEMP_UPLOAD_DIR = path.join(__dirname, "../../public/temp");
+if (!fs.existsSync(TEMP_UPLOAD_DIR)) fs.mkdirSync(TEMP_UPLOAD_DIR, { recursive: true });
 
-//attendance.route('/upload').post(upload.array('images',5),  MarkAttendanceWithFace);
+// --------------------
+// 🔹 ROUTES
+// --------------------
 
-// Manual bulk mark
-attendance.patch('/:attendanceId/bulk', BulkMarkAttendance);
+// ✅ 1. Create new attendance session
+// Example: POST /api/attendance/create
+router.post("/create", CreateAttendanceSession);
 
-// Get attendance
-attendance.get('/:attendanceId', GetAttendanceSession);
-attendance.get('/', GetAllAttendanceSessions);
+// ✅ 2. Mark attendance using face recognition
+// Example: POST /api/attendance/mark-face/:attendanceId
+router.post("/mark-face/:attendanceId", upload.array("file",3), MarkAttendanceWithFace);
 
-// Student attendance history
-attendance.get('/student/:studentId', GetStudentAttendance);
+// ✅ 3. Export attendance report (Excel)
+// Example: GET /api/attendance/export/:sectionId
+router.get("/export/:sectionId", AttendanceReport);
 
-// Section reports
-attendance.get('/section/:sectionId/report', GetSectionAttendanceReport);
-
-// Lock attendance
-attendance.patch('/:attendanceId/lock', LockAttendance);
-
-// Delete
-attendance.delete('/:attendanceId', DeleteAttendanceSession);
-
-export default attendance;
+export default router;
