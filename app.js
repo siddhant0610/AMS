@@ -22,7 +22,7 @@ import loginRoute from './router/login.routes.js';
 //import AdminRoute from './router/Admin.routes.js';
 // declare routes
 app.use('/api/v1/section',router);
-app.use('/api/vi/login',loginRoute)
+app.use('/api/v1/login',loginRoute)
 //app.use('/api/v1/admin',AdminRoute);
 app.use('/api/v1/course',Courserouter);
 app.use('/api/v1/student', StudentRoute);
