@@ -10,9 +10,8 @@ import { asyncHandler } from "../asyncHandler.js";
 ------------------------------------------------------------------- */
 const generateTokens = (user) => {
   const accessToken = jwt.sign(
-    { id: user._id, role: user.role, email: user.email },
-    process.env.ACCESS_TOKEN_SECRET
-    ,
+    { id: user._id, email: user.email },
+    process.env.ACCESS_TOKEN_SECRET,
     { expiresIn: "15m" } // short-lived
   );
 
@@ -29,13 +28,13 @@ const generateTokens = (user) => {
    1️⃣ LOGIN USER
 ------------------------------------------------------------------- */
 export const loginUser = asyncHandler(async (req, res) => {
-  const { email, password, role } = req.body;
+  const { email, password} = req.body;
 
-  if (!email || !password || !role) {
-    throw new ApiError(400, "Email, password, and role are required");
+  if (!email || !password) {
+    throw new ApiError(400, "Email and password are required");
   }
 
-  const user = await User.findOne({ email, role });
+  const user = await User.findOne({ email });
   if (!user) throw new ApiError(401, "Invalid credentials");
 
   const isPasswordValid = await bcrypt.compare(password, user.password);
@@ -55,12 +54,11 @@ export const loginUser = asyncHandler(async (req, res) => {
     .json(
       new ApiResponse(200, "Logged in successfully", {
         accessToken,
-        refreshToken,
         user: {
           id: user._id,
           name: user.name,
           email: user.email,
-          role: user.role,
+          role:user.role
         },
       })
     );
@@ -80,7 +78,7 @@ export const getMe = asyncHandler(async (req, res) => {
         id: user._id,
         name: user.name,
         email: user.email,
-        role: user.role,
+        role:user.role
       })
     );
 });
@@ -126,20 +124,21 @@ export const refreshAccessToken = asyncHandler(async (req, res) => {
    4️⃣ LOGOUT USER (/auth/logout)
 ------------------------------------------------------------------- */
 export const logoutUser = asyncHandler(async (req, res) => {
-  const { refreshToken } = req.body;
+  const { refreshToken, } = req.body;
 
   if (!refreshToken) throw new ApiError(400, "Refresh token is required");
 
   const user = await User.findOne({ refreshToken });
 
   if (user) {
+    user.accessToken=null;
     user.refreshToken = null;
     await user.save();
   }
 
   // Optionally clear cookies
-  // res.clearCookie("accessToken");
-  // res.clearCookie("refreshToken");
+  res.clearCookie("accessToken");
+  res.clearCookie("refreshToken");
 
   return res
     .status(200)
