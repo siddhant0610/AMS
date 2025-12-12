@@ -5,6 +5,25 @@ import { ApiError } from "../utils/api.Error.js";
 import { ApiResponse } from "../utils/api.response.js";
 import { asyncHandler } from "../asyncHandler.js";
 
+export const addUser=asyncHandler(async (req,res)=>{
+  const {email,password}=req.body;
+  if(!email || !password){
+    throw new ApiError(400,"Email and password are required");
+  }
+  const existingUser=await User.findOne({email});
+  if(existingUser){
+    throw new ApiError(409,"User with this email already exists");
+  }
+  const hashedPassword=await bcrypt.hash(password,10);
+  const user=await User.create({
+    email,
+    password:hashedPassword,
+    role:'teacher'
+  });
+  res.status(201).json(new ApiResponse(201,"User created successfully",{id:user._id,email:user.email}));
+})
+
+
 /* ------------------------------------------------------------------
    🔐 Helper — Generate Single Token (Session-like)
 ------------------------------------------------------------------- */
@@ -43,8 +62,9 @@ export const loginUser = asyncHandler(async (req, res) => {
     sameSite: "strict",
     maxAge: 7*24 * 60 * 60 * 1000 // 7 days in milliseconds (Match token expiry)
   };
-
-  return res
+user.refreshTokens = token; 
+  await user.save({ validateBeforeSave: false });
+  res
     .status(200)
     .cookie("token", token, options) // Save token in cookie
     .json(
@@ -54,7 +74,8 @@ export const loginUser = asyncHandler(async (req, res) => {
           id: user._id,
           name: user.name,
           email: user.email,
-          role: user.role
+          role: user.role,
+          refreshTokens: user.token
         },
       })
     );
