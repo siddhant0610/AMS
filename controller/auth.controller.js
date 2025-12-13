@@ -7,7 +7,22 @@ import { asyncHandler } from "../asyncHandler.js";
 
 export const addUser=asyncHandler(async (req,res)=>{
   const {email,password}=req.body;
-  const role=req.body.role || 'teacher';
+
+ const studentRegex = /@muj\.manipal\.edu$/; 
+  const teacherRegex = /@jaipur\.manipal\.edu$/;
+
+  let role = 'student'; // Default fallback? Or leave undefined to catch error below.
+
+  if (studentRegex.test(email)) {
+    role = 'student';
+  } else if (teacherRegex.test(email)) {
+    role = 'teacher';
+  } else {
+    // Optional: Block registration if domain doesn't match either
+    // throw new ApiError(400, "Invalid email domain. Must be Manipal ID.");
+  }
+
+ // console.log("Assigned Role:", role);
   if(!email || !password){
     throw new ApiError(400,"Email and password are required");
   }
@@ -19,7 +34,7 @@ export const addUser=asyncHandler(async (req,res)=>{
   const user=await User.create({
     email,
     password:hashedPassword,
-    role,
+    role:role,
   });
   res.status(201).json(new ApiResponse(201,"User created successfully",{id:user._id,email:user.email}));
 })
