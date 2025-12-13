@@ -7,6 +7,7 @@ import { asyncHandler } from "../asyncHandler.js";
 
 export const addUser=asyncHandler(async (req,res)=>{
   const {email,password}=req.body;
+  const role=req.body.role || 'teacher';
   if(!email || !password){
     throw new ApiError(400,"Email and password are required");
   }
@@ -18,7 +19,7 @@ export const addUser=asyncHandler(async (req,res)=>{
   const user=await User.create({
     email,
     password:hashedPassword,
-    role:User.role
+    role,
   });
   res.status(201).json(new ApiResponse(201,"User created successfully",{id:user._id,email:user.email}));
 })
