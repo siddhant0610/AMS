@@ -18,7 +18,7 @@ export const addUser=asyncHandler(async (req,res)=>{
   const user=await User.create({
     email,
     password:hashedPassword,
-    role:'teacher'
+    role:User.role
   });
   res.status(201).json(new ApiResponse(201,"User created successfully",{id:user._id,email:user.email}));
 })
