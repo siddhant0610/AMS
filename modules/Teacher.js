@@ -20,11 +20,11 @@ const TeacherSchema = new mongoose.Schema(
       lowercase: true,
       trim: true
     },
-    password: {
-      type: String,
-      required: true,
-      minlength: 6
-    },
+    // password: {
+    //   type: String,
+    //   required: true,
+    //   minlength: 6
+    // },
     employeeId: {
       type: String,
       required: true,
@@ -50,11 +50,11 @@ const TeacherSchema = new mongoose.Schema(
         ref: "Section"
       }
     ],
-
+    designation:{ type:String},
     role: {
       type: String,
-      enum: ["Faculty", "HOD", "Admin"],
-      default: "Faculty"
+      enum:['student', 'admin','teacher'],
+      default: "teacher"
     }
   },
   { timestamps: true }
