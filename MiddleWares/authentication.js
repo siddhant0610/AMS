@@ -1,35 +1,38 @@
-// middleware/auth.middleware.js
+// // middleware/auth.middleware.js
 import jwt from "jsonwebtoken";
 import { User } from "../modules/User.js";
 import { ApiError } from "../utils/api.Error.js";
 import { asyncHandler } from "../asyncHandler.js";
 
+
 export const verifyJWT = asyncHandler(async (req, res, next) => {
-  // 1️⃣ Extract token from Cookie OR Header
-  // Note: I changed 'accessToken' to 'token' to match the Login controller above
-  const token =
-    req.cookies?.token || 
-    req.header("Authorization")?.replace(/Bearer\s+/i, "").trim();
+  // ... (token extraction code) ...
 
-  if (!token) {
-    throw new ApiError(401, "Unauthorized — No token provided");
-  }
+  const token = req.cookies?.token || req.header("Authorization")?.replace("Bearer ", "");
 
-  // 2️⃣ Verify token
-  let decoded;
+  if (!token) throw new ApiError(401, "Unauthorized request");
+
   try {
-    decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
-  } catch (err) {
-    throw new ApiError(401, "Invalid or expired token");
+    const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET);
+
+    // // 👇 ADD THESE DEBUG LOGS 👇
+    // console.log("-----------------------------------------");
+    // console.log("🕵️ MIDDLEWARE DEBUGGER");
+    // console.log("1. Decoded Token:", decoded);
+    // console.log("2. Searching DB for ID:", decoded.id || decoded._id);
+
+    // // Attempt to find user
+    const user = await User.findById(decoded.id || decoded._id).select("-password");
+
+    // console.log("3. User Found in DB:", user); 
+    // console.log("-----------------------------------------");
+    req.user = user;
+    if (!user) {
+      // This is line 30 where your error comes from
+      throw new ApiError(401, "User not found");
+    }
+    next();
+  } catch (error) {
+    throw new ApiError(401, error?.message || "Invalid access token");
   }
-
-  // 3️⃣ Fetch user
-  const user = await User.findById(decoded.id).select("-password");
-
-  if (!user) {
-    throw new ApiError(401, "User not found");
-  }
-
-  req.user = user;
-  next();
 });
