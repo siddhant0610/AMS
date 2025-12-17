@@ -9,8 +9,8 @@ import { Course } from "./Course.js";
 // ===============================
 const SectionSchema = new mongoose.Schema(
   {
-    SectionName: { type: String, required: true, unique: true },
-
+    SectionName: { type: String, required: true, },
+    // section can have multiple courses and teachers 
     Course: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Course",
@@ -38,6 +38,7 @@ const SectionSchema = new mongoose.Schema(
     ],
 
     RoomNo: { type: String, required: true },
+    Building: { type: String, required: true },
 
     Day: [
       {

@@ -113,6 +113,7 @@ export const loginUser = asyncHandler(async (req, res) => {
   };
   user.refreshTokens = token;
   await user.save({ validateBeforeSave: false });
+   // console.log('Designation',teacher.designation);
   res
     .status(200)
     .cookie("token", token, options) // Save token in cookie
@@ -126,7 +127,7 @@ export const loginUser = asyncHandler(async (req, res) => {
           role: user.role,
           refreshTokens: user.token
         },
-        teacher:teacher? { name: teacher.name, email: teacher.email ,emp:teacher.employeeId} : undefined,
+        teacher:teacher? { name: teacher.name, email: teacher.email ,Designation:teacher.designation} : undefined,
         student: student? { name: student.name, email: student.email,regNo: student.regNo } : undefined,
       })
     );
