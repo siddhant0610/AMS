@@ -12,3 +12,4 @@ const UserSchema = new mongoose.Schema({
 });
 
 export const User = mongoose.model("User", UserSchema);
+// create a primary key for ams that is unique and used for search 
