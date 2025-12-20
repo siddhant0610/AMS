@@ -44,7 +44,7 @@ const SectionSchema = new mongoose.Schema(
       {
         Day: {
           type: [String],
-          enum: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+          enum: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday","Saturday"],
           required: true
         },
         startTime: { type: String, required: true },

@@ -47,11 +47,12 @@ export const getTeacherDashboard = asyncHandler(async (req, res) => {
 
     todaySlots.forEach(slot => {
       schedule.push({
-        id: sec._id,             // Useful for clicking into the class
-        subject: sec.Course?.courseName || "Unknown Course",
+        Section_id: sec._id,             // Useful for clicking into the class
+        subject: sec.Course.CourseName?.courseName || "Unknown Course", // issue 
         courseCode: sec.Course?.courseCode || "",
-        section: sec.SectionName,
+        section_name: sec.SectionName,
         time: `${slot.startTime} - ${slot.endTime}`,
+        Building: sec.Building,
         room: sec.RoomNo,
         status: slot.completed === "NA" ? "Scheduled" : "Completed",
         totalStudents: sec.Student.length

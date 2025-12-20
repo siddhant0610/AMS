@@ -19,11 +19,11 @@ import router from './router/sectionRoutes.js';
 import Courserouter from './router/Course.Routes.js';
 import attendance from './router/attendence.routes.js';
 import loginRoute from './router/login.routes.js';
-import dashboardRouter from './router/dashboar.route.js';
+import dashboardRouter from './router/dashboard.route.js';
 //import AdminRoute from './router/Admin.routes.js';
 // declare routes
 app.use('/api/v1/section',router);
-app.use('/api/v1/dashboad',dashboardRouter)
+app.use('/api/v1/dashboard',dashboardRouter)
 app.use('/api/v1/login',loginRoute)
 //app.use('/api/v1/admin',AdminRoute);
 app.use('/api/v1/course',Courserouter);

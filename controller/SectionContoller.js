@@ -140,7 +140,57 @@ export const UpdateSection = asyncHandler(async (req, res) => {
     data: updated,
   });
 });
+/* ==========================================================
+   ✅ ADD SCHEDULE (DAYS) TO EXISTING SECTION
+   Route: PUT /api/v1/section/:id/schedule
+========================================================== */
+export const AddScheduleToSection = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { Day } = req.body; // Expecting an array of schedule objects
 
+  // 1️⃣ Validation
+  if (!Day || !Array.isArray(Day) || Day.length === 0) {
+    return res.status(400).json({
+      success: false,
+      message: "Please provide a 'Day' array with schedule objects.",
+    });
+  }
+
+  // Validate time format (HH:MM)
+  const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+  for (const d of Day) {
+    if (!d.Day || !d.startTime || !d.endTime) {
+      return res.status(400).json({ success: false, message: "Each schedule must have Day, startTime, and endTime." });
+    }
+    if (!timeRegex.test(d.startTime) || !timeRegex.test(d.endTime)) {
+      return res.status(400).json({ success: false, message: "Invalid time format. Use HH:MM (e.g., 09:00)." });
+    }
+  }
+
+  // 2️⃣ Find and Update
+  // We use $push with $each to append multiple new days at once
+  const updatedSection = await Section.findByIdAndUpdate(
+    id,
+    { 
+      $push: { 
+        Day: { $each: Day } 
+      } 
+    },
+    { new: true, runValidators: true }
+  )
+  .populate("Course", "CourseName courseCode")
+  .populate("Teacher", "name");
+
+  if (!updatedSection) {
+    return res.status(404).json({ success: false, message: "Section not found" });
+  }
+
+  res.status(200).json({
+    success: true,
+    message: "New schedule days added successfully",
+    data: updatedSection,
+  });
+});
 /* ==========================================================
    ✅ DELETE SECTION
 ========================================================== */
