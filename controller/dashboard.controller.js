@@ -99,7 +99,7 @@ export const getStudentDashboard = asyncHandler(async (req, res) => {
     "Student.Reg_No": studentProfile._id, // Look inside the Student array
     "Day.Day": todayName
   })
-  .populate("Course", "courseName courseCode")
+  .populate("Course", "CourseName courseCode")
   .populate("Teacher", "name");
 
   // 3️⃣ FILTER & FORMAT
@@ -111,7 +111,7 @@ export const getStudentDashboard = asyncHandler(async (req, res) => {
     todaySlots.forEach(slot => {
       schedule.push({
         id: sec._id,
-        subject: sec.Course?.courseName || "Unknown Course",
+        subject: sec.Course?.CourseName || "Unknown Course",
         courseCode: sec.Course?.courseCode || "",
         teacher: sec.Teacher?.name || "TBD",
         time: `${slot.startTime} - ${slot.endTime}`,
