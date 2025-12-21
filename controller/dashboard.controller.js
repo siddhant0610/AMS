@@ -35,7 +35,7 @@ export const getTeacherDashboard = asyncHandler(async (req, res) => {
     Teacher: teacherProfile._id,   
     "Day.Day": todayName           // Checks if "Wednesday" is inside the Day array
   })
-  .populate("Course", "courseName courseCode")
+  .populate("Course", "CourseName courseCode")
   .populate("Teacher", "name");
 
   // 3️⃣ FILTER: Extract only the specific time slot for today
@@ -48,7 +48,7 @@ export const getTeacherDashboard = asyncHandler(async (req, res) => {
     todaySlots.forEach(slot => {
       schedule.push({
         Section_id: sec._id,             // Useful for clicking into the class
-        subject: sec.Course.CourseName?.courseName || "Unknown Course", // issue 
+        subject: sec.Course?.CourseName || "Unknown Course", // issue 
         courseCode: sec.Course?.courseCode || "",
         section_name: sec.SectionName,
         time: `${slot.startTime} - ${slot.endTime}`,
