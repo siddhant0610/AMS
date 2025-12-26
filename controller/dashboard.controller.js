@@ -1,73 +1,127 @@
 import { asyncHandler } from "../asyncHandler.js";
+import { ApiError } from "../utils/api.Error.js";
 import { Teacher } from "../modules/Teacher.js";
 import { Student } from "../modules/Student.js";
-import { Section } from "../modules/Section.js"; // Your Section model
+import { Section } from "../modules/Section.js"; 
+// 👇 NEW IMPORT: Needed to create the sessions
+import { Attendance } from "../modules/Attendance.js"; 
 
 /* ------------------------------------------------------------
    🗓️ Utility: Get Current Day Name (e.g., "Wednesday")
 ------------------------------------------------------------ */
-const getCurrentDayName = () => {
+const getCurrentDayName = (date) => {
   const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-  return days[new Date().getDay()];
+  return days[date.getDay()];
 };
 
 /* ------------------------------------------------------------
-   👨‍🏫 TEACHER DASHBOARD
-   Logic: User Email -> Teacher Profile -> Find Sections -> Filter Today's Slot
+   👨‍🏫 TEACHER DASHBOARD (Strategy B: Auto-Create Logic)
 ------------------------------------------------------------ */
 export const getTeacherDashboard = asyncHandler(async (req, res) => {
   const user = req.user;
-  const todayName = getCurrentDayName(); 
+  const today = new Date();
+  today.setHours(0, 0, 0, 0); // Start of today (Midnight)
+  const todayName = getCurrentDayName(today); 
 
-  // 1️⃣ BRIDGE: Find Teacher Profile using Email
+  // 1️⃣ BRIDGE: Find Teacher Profile
   const teacherProfile = await Teacher.findOne({ email: user.email });
 
   if (!teacherProfile) {
-    return res.status(200).json({ 
-      success: true, 
-      message: "Teacher profile not found for this user.", 
-      schedule: [] 
-    });
+    return res.status(200).json({ success: true, message: "Teacher profile not found.", schedule: [] });
   }
 
-  // 2️⃣ QUERY: Find Sections linked to this Teacher that meet on 'todayName'
-  const sections = await Section.find({
-    Teacher: teacherProfile._id,   
-    "Day.Day": todayName           // Checks if "Wednesday" is inside the Day array
+  // 2️⃣ CHECK: Do buckets (Attendance Docs) already exist for today?
+  let todaySessions = await Attendance.find({
+    markedBy: teacherProfile._id,
+    date: today
   })
-  .populate("Course", "CourseName courseCode")
-  .populate("Teacher", "name");
+  .populate("course", "CourseName courseCode") // Matches your Schema refs
+  .populate("section", "SectionName RoomNo");
 
-  // 3️⃣ FILTER: Extract only the specific time slot for today
-  let schedule = [];
+  // 3️⃣ AUTO-CREATE: If list is empty, generate from Static Schedule
+  if (todaySessions.length === 0) {
+    console.log(`⚡ Generating attendance sessions for ${teacherProfile.name}...`);
 
-  sections.forEach((sec) => {
-    // A section might meet Mon 9am and Wed 2pm. We only want today's slot.
-    const todaySlots = sec.Day.filter(d => d.Day.includes(todayName));
+    // A. Find the Static Schedule (Sections meeting today)
+    const sections = await Section.find({
+      Teacher: teacherProfile._id,   
+      "Day.Day": todayName           
+    }).populate("Student.Reg_No"); // Need student list to initialize attendance
 
-    todaySlots.forEach(slot => {
-      schedule.push({
-        Section_id: sec._id,             // Useful for clicking into the class
-        subject: sec.Course?.CourseName || "Unknown Course", // issue 
-        courseCode: sec.Course?.courseCode || "",
-        section_name: sec.SectionName,
-        time: `${slot.startTime} - ${slot.endTime}`,
-        Building: sec.Building,
-        room: sec.RoomNo,
-        status: slot.completed === "NA" ? "Scheduled" : "Completed",
-        totalStudents: sec.Student.length
-      });
-    });
-  });
+    const newSessions = [];
 
-  // 4️⃣ SORT: Order by start time (e.g., 09:00 before 14:00)
+    // B. Loop through sections and create "Attendance" documents
+    for (const sec of sections) {
+      // Filter: Only get today's specific time slot
+      const validSlots = sec.Day.filter(d => d.Day.includes(todayName));
+
+      for (const slot of validSlots) {
+        // Double-check: Prevent duplicates
+        const exists = await Attendance.findOne({
+           section: sec._id, date: today, startTime: slot.startTime 
+        });
+        if (exists) continue;
+
+        // Initialize empty student records
+        const studentRecords = sec.Student.map(s => ({
+          student: s.Reg_No._id,
+          status: "absent", // Default status
+          faceRecognition: { verified: false }
+        }));
+
+        // Create the Session
+        const session = await Attendance.create({
+          section: sec._id,
+          course: sec.Course, // Assumes Section has Course ID
+          markedBy: teacherProfile._id,
+          date: today,
+          day: todayName,
+          startTime: slot.startTime,
+          endTime: slot.endTime,
+          roomNo: sec.RoomNo,
+          students: studentRecords,
+          isLocked: false
+        });
+        
+        newSessions.push(session);
+      }
+    }
+
+    // C. Refresh the list to return the newly created docs
+    if (newSessions.length > 0) {
+       todaySessions = await Attendance.find({
+          markedBy: teacherProfile._id,
+          date: today
+       })
+       .populate("course", "CourseName courseCode")
+       .populate("section", "SectionName RoomNo");
+    }
+  }
+
+  // 4️⃣ FORMAT RESPONSE
+  // ⚠️ CRITICAL: We map 'id' to the ATTENDANCE ID, not the Section ID
+  const schedule = todaySessions.map((session) => ({
+    id: session._id, // <--- Used for Face Upload Route
+    sectionId: session.section?._id, // Keep reference just in case
+    subject: session.course?.CourseName || session.course?.courseName || "Unknown Course",
+    courseCode: session.course?.courseCode || "",
+    section_name: session.section?.SectionName,
+    time: `${session.startTime} - ${session.endTime}`,
+    room: session.roomNo,
+    // If locked, it's "Completed". If not, it's "Scheduled"
+    status: session.isLocked ? "Completed" : "Scheduled",
+    totalStudents: session.students.length,
+    presentCount: session.totalPresent || 0
+  }));
+
+  // 5️⃣ SORT by Time
   schedule.sort((a, b) => a.time.localeCompare(b.time));
 
   return res.status(200).json({
     success: true,
     role: "teacher",
     teacherName: teacherProfile.name,
-    date: new Date().toDateString(),
+    date: today.toDateString(),
     day: todayName,
     count: schedule.length,
     schedule
@@ -76,33 +130,29 @@ export const getTeacherDashboard = asyncHandler(async (req, res) => {
 
 /* ------------------------------------------------------------
    👨‍🎓 STUDENT DASHBOARD
-   Logic: User Email -> Student Profile -> Find Sections -> Filter Today's Slot
+   (Remains mostly the same, reading from Static Schedule)
 ------------------------------------------------------------ */
 export const getStudentDashboard = asyncHandler(async (req, res) => {
   const user = req.user;
-  const todayName = getCurrentDayName();
+  const today = new Date();
+  const todayName = getCurrentDayName(today);
 
-  // 1️⃣ BRIDGE: Find Student Profile using Email
+  // 1️⃣ BRIDGE
   const studentProfile = await Student.findOne({ email: user.email });
 
   if (!studentProfile) {
-    return res.status(200).json({ 
-      success: true, 
-      message: "Student profile not found.", 
-      schedule: [] 
-    });
+    return res.status(200).json({ success: true, message: "Student profile not found.", schedule: [] });
   }
 
-  // 2️⃣ CHECK ENROLLMENT: In your new Schema, Students are inside the Section
-  // So we find Sections where the Student Array contains this Student's ID
+  // 2️⃣ QUERY SECTIONS
   const sections = await Section.find({
-    "Student.Reg_No": studentProfile._id, // Look inside the Student array
+    "Student.Reg_No": studentProfile._id,
     "Day.Day": todayName
   })
   .populate("Course", "CourseName courseCode")
   .populate("Teacher", "name");
 
-  // 3️⃣ FILTER & FORMAT
+  // 3️⃣ FORMAT
   let schedule = [];
 
   sections.forEach((sec) => {
@@ -111,24 +161,23 @@ export const getStudentDashboard = asyncHandler(async (req, res) => {
     todaySlots.forEach(slot => {
       schedule.push({
         id: sec._id,
-        subject: sec.Course?.CourseName || "Unknown Course",
+        subject: sec.Course?.CourseName || sec.Course?.courseName || "Unknown Course",
         courseCode: sec.Course?.courseCode || "",
         teacher: sec.Teacher?.name || "TBD",
         time: `${slot.startTime} - ${slot.endTime}`,
         room: sec.RoomNo,
-        status: "Pending" // You will implement real status later via Attendance model
+        status: "Pending" // Student sees "Pending" until you link Real Attendance Data
       });
     });
   });
 
-  // 4️⃣ SORT
   schedule.sort((a, b) => a.time.localeCompare(b.time));
 
   return res.status(200).json({
     success: true,
     role: "student",
     studentName: studentProfile.name,
-    date: new Date().toDateString(),
+    date: today.toDateString(),
     day: todayName,
     count: schedule.length,
     schedule
