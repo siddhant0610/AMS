@@ -45,7 +45,7 @@ const AttendanceSchema = new mongoose.Schema({
     // Day of week
     day: {
         type: String,
-        enum: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+        enum: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday','Saturday','Sunday'],
         required: true
     },
     
@@ -114,7 +114,12 @@ const AttendanceSchema = new mongoose.Schema({
     isLocked: {
         type: Boolean,
         default: false
-    }
+    },
+    lockTime: { 
+    type: Date, 
+    // Automatically set to 36 hours from creation
+    default: () => new Date(+new Date() + 36 * 60 * 60 * 1000) 
+  }
 }, { timestamps: true });
 
 // Compound index for unique attendance record per section per date per time

@@ -4,10 +4,11 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 import {
-  CreateAttendanceSession,
-  MarkAttendanceWithFace,
-  AttendanceReport,
-} from "../controller/Attendence.Marked.js";
+
+    markAttendanceWithFace, 
+    getMyAttendance,
+    getSessionDetails
+} from "../controller/Attendence.controller.js";
 
 const router = express.Router();
 
@@ -41,6 +42,7 @@ const upload = multer({
 
 // Ensure temp folder exists
 import fs from "fs";
+import { verifyJWT } from "../MiddleWares/authentication.js";
 const TEMP_UPLOAD_DIR = path.join(__dirname, "../../public/temp");
 if (!fs.existsSync(TEMP_UPLOAD_DIR)) fs.mkdirSync(TEMP_UPLOAD_DIR, { recursive: true });
 
@@ -48,16 +50,14 @@ if (!fs.existsSync(TEMP_UPLOAD_DIR)) fs.mkdirSync(TEMP_UPLOAD_DIR, { recursive: 
 // 🔹 ROUTES
 // --------------------
 
-// ✅ 1. Create new attendance session
-// Example: POST /api/attendance/create
-router.post("/create", CreateAttendanceSession);
-
 // ✅ 2. Mark attendance using face recognition
 // Example: POST /api/attendance/mark-face/:attendanceId
-router.post("/mark-face/:attendanceId", upload.array("file",3), MarkAttendanceWithFace);
+router.post("/mark-face/:attendanceId", verifyJWT,upload.array("images",4), markAttendanceWithFace);
+router.get("/my",verifyJWT, verifyJWT,getMyAttendance);
+router.get("/session/:id", verifyJWT,getSessionDetails);
 
 // ✅ 3. Export attendance report (Excel)
 // Example: GET /api/attendance/export/:sectionId
-router.get("/export/:sectionId", AttendanceReport);
+//router.get("/export/:sectionId", AttendanceReport);
 
 export default router;
