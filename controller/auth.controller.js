@@ -160,3 +160,4 @@ export const getMe = asyncHandler(async (req, res) => {
     new ApiResponse(200, "User fetched successfully", req.user)
   );
 });
+// token issue for multiple device and same token is generated 
