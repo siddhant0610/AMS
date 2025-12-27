@@ -16,6 +16,7 @@ const API_TIMEOUT = parseInt(process.env.API_TIMEOUT) || 300000; // 5 Minutes
 // ===============================
 // UTILITIES (Resize & Zip)
 // ===============================
+// ⚠️ KEEP THESE FULL FUNCTIONS! Do not replace them with placeholders.
 const resizeImage = async (imagePath) => {
   const resizedPath = path.join(
     path.dirname(imagePath),
@@ -110,7 +111,7 @@ export const processFaceBatch = async (imagePaths = [], sectionId) => {
     const zip = new AdmZip(Buffer.from(zipRes.data));
     const zipEntries = zip.getEntries();
 
-    let resultsJson = [];
+    let resultsJson = null;
     let excelBuffer = null;
 
     zipEntries.forEach((entry) => {
@@ -120,21 +121,26 @@ export const processFaceBatch = async (imagePaths = [], sectionId) => {
         resultsJson = JSON.parse(jsonText);
       }
 
-      // B. Extract Excel File (Look for any .xlsx file)
-      // 👇 THIS IS THE NEW PART FOR DOWNLOADING
-      if (entry.entryName.endsWith(".xlsx")) {
-        console.log(`📊 Found Excel Report: ${entry.entryName}`);
+      // B. Extract Excel File
+     if (
+        entry.entryName.includes("consolidated") && 
+        entry.entryName.endsWith(".xlsx")
+      ) {
+        console.log(`🎯 FOUND MASTER REPORT: ${entry.entryName}`);
         excelBuffer = entry.getData(); 
       }
     });
 
     if (!resultsJson) throw new Error("Results zip missing 'results.json'");
 
-    // 5. Return everything to Controller
+    // 5. Structure the return (The "Safe" Logic)
+    // Checks if resultsJson is { results: [...] } OR just [...]
+    const finalResults = resultsJson.results || resultsJson; 
+
     return {
       success: true,
-      results: resultsJson, // The array of matches
-      excelBuffer: excelBuffer // The raw file to send to frontend
+      results: finalResults, 
+      excelBuffer: excelBuffer 
     };
 
   } catch (error) {
