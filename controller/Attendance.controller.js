@@ -226,6 +226,20 @@ export const markAttendanceWithFace = asyncHandler(async (req, res) => {
     );
     fs.renameSync(file.path, newPath);
   }
+  if (batchResult.excelBuffer) {
+    // A. Set Headers so browser knows it's a file
+    res.setHeader(
+      "Content-Type", 
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition", 
+      `attachment; filename="Attendance_${attendance.section.SectionName}_${Date.now()}.xlsx"`
+    );
+
+    // B. Send the Buffer directly
+    return res.send(batchResult.excelBuffer);
+  }
 
   res.json({
     success: true,
