@@ -15,7 +15,7 @@ const Courserouter = express.Router();
 
 // Basic CRUD
 Courserouter.post('/', CreateCourse);
-Courserouter.get('/courses', GetAllCourses);
+Courserouter.get('/', GetAllCourses);
 Courserouter.get('/courses/:id', GetCourse);
 Courserouter.get('/courses/code/:courseCode', GetCourseByCode);
 Courserouter.put('/courses/:id', UpdateCourse);

@@ -8,7 +8,8 @@ import {
     AddStudentToSection,
     RemoveStudentFromSection,
     MarkAttendance,
-    MarkSectionCompleted
+    MarkSectionCompleted,
+    AddScheduleToSection
 } from '../controller/SectionContoller.js';
 
 const router = express.Router();
@@ -19,6 +20,7 @@ router.get('/', GetAllSections);
 router.get('/:id', GetSection);
 router.put('/:id', UpdateSection);
 router.delete('/:id', DeleteSection);
+router.put('/:id/schedule', AddScheduleToSection);
 
 // Student management
 router.post('/:id/students', AddStudentToSection);
