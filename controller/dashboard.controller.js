@@ -1,150 +1,131 @@
 import { asyncHandler } from "../asyncHandler.js";
-import { ApiError } from "../utils/api.Error.js";
 import { Teacher } from "../modules/Teacher.js";
 import { Student } from "../modules/Student.js";
-import { Section } from "../modules/Section.js"; 
-// 👇 NEW IMPORT: Needed to create the sessions
-import { Attendance } from "../modules/Attendance.js"; 
+import { Section } from "../modules/Section.js";
 
-/* ------------------------------------------------------------
-   🗓️ Utility: Get Current Day Name (e.g., "Wednesday")
------------------------------------------------------------- */
-const getCurrentDayName = (date) => {
-  const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-  return days[date.getDay()];
+/* ============================================================
+   🇮🇳 TIME UTILITIES (Fixes Time Zone Issues)
+   Forces the server to think in "Asia/Kolkata" (IST)
+============================================================ */
+
+// 1. Get Current Date Object in IST
+const getIndiaDate = () => {
+  const indiaTime = new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+  return new Date(indiaTime);
 };
 
-/* ------------------------------------------------------------
-   👨‍🏫 TEACHER DASHBOARD (Strategy B: Auto-Create Logic)
------------------------------------------------------------- */
+// 2. Get Current Day Name in IST (e.g., "Friday")
+const getIndiaDayName = () => {
+  const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  return days[getIndiaDate().getDay()];
+};
+
+// 3. Format Database Time to "HH:MM" (IST)
+const formatTimeIST = (timeValue) => {
+  // If it's already a clean string like "10:00", keep it.
+  if (typeof timeValue === 'string' && timeValue.includes(':')) return timeValue;
+
+  // If it's a Date object (UTC), convert to IST string
+  return new Date(timeValue).toLocaleTimeString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false // Set to true if you want "02:00 pm"
+  });
+};
+
+/* ============================================================
+   👨‍🏫 TEACHER DASHBOARD
+============================================================ */
 export const getTeacherDashboard = asyncHandler(async (req, res) => {
   const user = req.user;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0); // Start of today (Midnight)
-  const todayName = getCurrentDayName(today); 
+  
+  // ✅ FIX: Get the day name according to INDIA
+  const todayName = getIndiaDayName(); 
 
   // 1️⃣ BRIDGE: Find Teacher Profile
   const teacherProfile = await Teacher.findOne({ email: user.email });
 
   if (!teacherProfile) {
-    return res.status(200).json({ success: true, message: "Teacher profile not found.", schedule: [] });
+    return res.status(200).json({ 
+      success: true, 
+      message: "Teacher profile not found for this user.", 
+      schedule: [] 
+    });
   }
 
-  // 2️⃣ CHECK: Do buckets (Attendance Docs) already exist for today?
-  let todaySessions = await Attendance.find({
-    markedBy: teacherProfile._id,
-    date: today
+  // 2️⃣ QUERY: Find Sections for Today
+  const sections = await Section.find({
+    Teacher: teacherProfile._id,   
+    "Day.Day": todayName           
   })
-  .populate("course", "CourseName courseCode") // Matches your Schema refs
-  .populate("section", "SectionName RoomNo");
+  .populate("Course", "CourseName courseCode")
+  .populate("Teacher", "name");
 
-  // 3️⃣ AUTO-CREATE: If list is empty, generate from Static Schedule
-  if (todaySessions.length === 0) {
-    console.log(`⚡ Generating attendance sessions for ${teacherProfile.name}...`);
+  // 3️⃣ FILTER & FORMAT
+  let schedule = [];
 
-    // A. Find the Static Schedule (Sections meeting today)
-    const sections = await Section.find({
-      Teacher: teacherProfile._id,   
-      "Day.Day": todayName           
-    }).populate("Student.Reg_No"); // Need student list to initialize attendance
+  sections.forEach((sec) => {
+    // Filter specifically for today's slot(s)
+    const todaySlots = sec.Day.filter(d => d.Day.includes(todayName));
 
-    const newSessions = [];
+    todaySlots.forEach(slot => {
+      // ✅ FIX: Format times to avoid UTC confusion
+      const startTime = formatTimeIST(slot.startTime);
+      const endTime = formatTimeIST(slot.endTime);
 
-    // B. Loop through sections and create "Attendance" documents
-    for (const sec of sections) {
-      // Filter: Only get today's specific time slot
-      const validSlots = sec.Day.filter(d => d.Day.includes(todayName));
-
-      for (const slot of validSlots) {
-        // Double-check: Prevent duplicates
-        const exists = await Attendance.findOne({
-           section: sec._id, date: today, startTime: slot.startTime 
-        });
-        if (exists) continue;
-
-        // Initialize empty student records
-        const studentRecords = sec.Student.map(s => ({
-          student: s.Reg_No._id,
-          status: "absent", // Default status
-          faceRecognition: { verified: false }
-        }));
-
-        // Create the Session
-        const session = await Attendance.create({
-          section: sec._id,
-          course: sec.Course, // Assumes Section has Course ID
-          markedBy: teacherProfile._id,
-          date: today,
-          day: todayName,
-          startTime: slot.startTime,
-          endTime: slot.endTime,
-          roomNo: sec.RoomNo,
-          students: studentRecords,
-          isLocked: false
-        });
+      schedule.push({
+        Section_id: sec._id,            
+        subject: sec.Course?.CourseName || "Unknown Course",
+        courseCode: sec.Course?.courseCode || "",
+        section_name: sec.SectionName,
         
-        newSessions.push(session);
-      }
-    }
+        // Time is now safe & clean
+        time: `${startTime} - ${endTime}`,
+        
+        Building: sec.Building,
+        room: sec.RoomNo,
+        status: slot.completed === "NA" ? "Scheduled" : "Completed",
+        totalStudents: sec.Student.length
+      });
+    });
+  });
 
-    // C. Refresh the list to return the newly created docs
-    if (newSessions.length > 0) {
-       todaySessions = await Attendance.find({
-          markedBy: teacherProfile._id,
-          date: today
-       })
-       .populate("course", "CourseName courseCode")
-       .populate("section", "SectionName RoomNo");
-    }
-  }
-
-  // 4️⃣ FORMAT RESPONSE
-  // ⚠️ CRITICAL: We map 'id' to the ATTENDANCE ID, not the Section ID
-  const schedule = todaySessions.map((session) => ({
-    id: session._id, // <--- Used for Face Upload Route
-    sectionId: session.section?._id, // Keep reference just in case
-    subject: session.course?.CourseName || session.course?.courseName || "Unknown Course",
-    courseCode: session.course?.courseCode || "",
-    section_name: session.section?.SectionName,
-    time: `${session.startTime} - ${session.endTime}`,
-    room: session.roomNo,
-    // If locked, it's "Completed". If not, it's "Scheduled"
-    status: session.isLocked ? "Completed" : "Scheduled",
-    totalStudents: session.students.length,
-    presentCount: session.totalPresent || 0
-  }));
-
-  // 5️⃣ SORT by Time
+  // 4️⃣ SORT: Earliest class first
   schedule.sort((a, b) => a.time.localeCompare(b.time));
 
   return res.status(200).json({
     success: true,
     role: "teacher",
     teacherName: teacherProfile.name,
-    date: today.toDateString(),
+    date: getIndiaDate().toDateString(), // ✅ FIX: Send IST Date string
     day: todayName,
     count: schedule.length,
     schedule
   });
 });
 
-/* ------------------------------------------------------------
+/* ============================================================
    👨‍🎓 STUDENT DASHBOARD
-   (Remains mostly the same, reading from Static Schedule)
------------------------------------------------------------- */
+============================================================ */
 export const getStudentDashboard = asyncHandler(async (req, res) => {
   const user = req.user;
-  const today = new Date();
-  const todayName = getCurrentDayName(today);
+  
+  // ✅ FIX: Get the day name according to INDIA
+  const todayName = getIndiaDayName();
 
-  // 1️⃣ BRIDGE
+  // 1️⃣ BRIDGE: Find Student Profile
   const studentProfile = await Student.findOne({ email: user.email });
 
   if (!studentProfile) {
-    return res.status(200).json({ success: true, message: "Student profile not found.", schedule: [] });
+    return res.status(200).json({ 
+      success: true, 
+      message: "Student profile not found.", 
+      schedule: [] 
+    });
   }
 
-  // 2️⃣ QUERY SECTIONS
+  // 2️⃣ CHECK ENROLLMENT: Find Sections containing this Student
   const sections = await Section.find({
     "Student.Reg_No": studentProfile._id,
     "Day.Day": todayName
@@ -152,32 +133,40 @@ export const getStudentDashboard = asyncHandler(async (req, res) => {
   .populate("Course", "CourseName courseCode")
   .populate("Teacher", "name");
 
-  // 3️⃣ FORMAT
+  // 3️⃣ FILTER & FORMAT
   let schedule = [];
 
   sections.forEach((sec) => {
     const todaySlots = sec.Day.filter(d => d.Day.includes(todayName));
 
     todaySlots.forEach(slot => {
+      // ✅ FIX: Format times
+      const startTime = formatTimeIST(slot.startTime);
+      const endTime = formatTimeIST(slot.endTime);
+
       schedule.push({
         id: sec._id,
-        subject: sec.Course?.CourseName || sec.Course?.courseName || "Unknown Course",
+        subject: sec.Course?.CourseName || "Unknown Course",
         courseCode: sec.Course?.courseCode || "",
         teacher: sec.Teacher?.name || "TBD",
-        time: `${slot.startTime} - ${slot.endTime}`,
+        
+        // Time is now safe & clean
+        time: `${startTime} - ${endTime}`,
+        
         room: sec.RoomNo,
-        status: "Pending" // Student sees "Pending" until you link Real Attendance Data
+        status: "Pending" 
       });
     });
   });
 
+  // 4️⃣ SORT
   schedule.sort((a, b) => a.time.localeCompare(b.time));
 
   return res.status(200).json({
     success: true,
     role: "student",
     studentName: studentProfile.name,
-    date: today.toDateString(),
+    date: getIndiaDate().toDateString(), // ✅ FIX: Send IST Date string
     day: todayName,
     count: schedule.length,
     schedule
