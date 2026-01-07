@@ -6,7 +6,8 @@ import { fileURLToPath } from "url";
 import {
     markAttendanceWithFace, 
     getMyAttendance,
-    getSessionDetails
+    getSessionDetails,
+    checkAttendanceStatus
 } from "../controller/Attendance.controller.js";
 
 const router = express.Router();
@@ -54,7 +55,7 @@ if (!fs.existsSync(TEMP_UPLOAD_DIR)) fs.mkdirSync(TEMP_UPLOAD_DIR, { recursive: 
 router.post("/mark-face/:attendanceId", verifyJWT,upload.array("images",4), markAttendanceWithFace);
 router.get("/my",verifyJWT, verifyJWT,getMyAttendance);
 router.get("/session/:id", verifyJWT,getSessionDetails);
-
+router.get("/session/:id", verifyJWT,checkAttendanceStatus);
 // ✅ 3. Export attendance report (Excel)
 // Example: GET /api/attendance/export/:sectionId
 //router.get("/export/:sectionId", AttendanceReport);
