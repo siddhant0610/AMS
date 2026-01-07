@@ -111,7 +111,7 @@ const AttendanceSchema = new mongoose.Schema({
     },
     
     // Lock attendance (prevent further changes)
-    isLocked: {
+    isMarked: {
         type: Boolean,
         default: false
     },
