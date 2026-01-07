@@ -3,415 +3,320 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { asyncHandler } from "../asyncHandler.js";
 import { ApiError } from "../utils/api.Error.js";
-import { Attendance } from "../modules/Attendance.js"; // Your Schema 2
-import { Section } from "../modules/Section.js";       // Your Section Schema
+import xlsx from "xlsx"; // 👈 Used to read the AI Excel report
+
+// Models
+import { Attendance } from "../modules/Attendance.js"; 
+import { Section } from "../modules/Section.js";       
 import { Teacher } from "../modules/Teacher.js";
 import { Student } from "../modules/Student.js";
-import { processFaceBatch } from "../Services/faceRecognition.js"; // Your AI Service
+import { Submission } from "../modules/Submission.js"; // ⚠️ Check this path matches your folder structure
+
+// Services
+import { processFaceBatch } from "../Services/faceRecognition.js"; 
 
 // ===============================
 // 🔧 CONFIG & HELPERS
 // ===============================
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const UPLOAD_DIR = path.join(__dirname, "../../public/uploads/attendance");
 
-if (!fs.existsSync(UPLOAD_DIR)) {
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-}
-
+// ✅ FIX: "Gentle" Delete - Ignores errors if file is locked
 const safeDelete = (filePath) => {
-  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  try {
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  } catch (error) {
+    console.warn(`⚠️ Warning: Could not delete temp file: ${filePath}. It might be locked by Windows.`);
+  }
 };
 
-const getDayName = (date) => {
-  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  return days[date.getDay()];
-};
+/* ==========================================================================
+   1️⃣ CHECK STATUS (Idempotency Check)
+   Route: GET /api/v1/attendance/status/:attendanceId
+========================================================================== */
+export const checkAttendanceStatus = asyncHandler(async (req, res) => {
+  const { attendanceId } = req.params;
+  const { includeData } = req.query; // ?includeData=true
 
-// ==========================================================================
-// 1️⃣ GET TEACHER SESSIONS (SMART DASHBOARD)
-// 🟢 Strategy B: Checks for today's sessions. If missing, Auto-Creates them.
-// ==========================================================================
-// export const getTeacherSessions = asyncHandler(async (req, res) => {
-//   const user = req.user;
-//   const today = new Date();
-//   today.setHours(0, 0, 0, 0); // Normalize to midnight
-//   const dayName = getDayName(today); // e.g., "Wednesday"
+  // 1. Find the Session (Lightweight query first)
+  let query = Attendance.findById(attendanceId).select("isMarked section course students");
+  
+  if (includeData === "true") {
+    // If frontend wants data immediately, fetch names
+    query = query.populate("students.student", "name regNo");
+  }
 
-//   // 1. BRIDGE: Verify Teacher Identity
-//   const teacherProfile = await Teacher.findOne({ email: user.email });
-//   if (!teacherProfile) throw new ApiError(404, "Teacher profile not found");
+  const attendance = await query;
 
-//   // 2. CHECK: Do sessions already exist for today?
-//   let todaySessions = await Attendance.find({
-//     markedBy: teacherProfile._id,
-//     date: today
-//   })
-//   .populate("course", "courseName courseCode")
-//   .populate("section", "SectionName RoomNo");
+  if (!attendance) {
+    throw new ApiError(404, "Session not found");
+  }
 
-//   // 3. AUTO-CREATE: If no sessions exist (or list is empty), generate them from Timetable
-//   if (todaySessions.length === 0) {
-//     console.log(`⚡ Auto-generating sessions for ${teacherProfile.name} on ${dayName}...`);
+  // 2. Prepare Response
+  const response = {
+    success: true,
+    attendanceId: attendance._id,
+    isMarked: attendance.isLocked, // ✅ True = Already Done, False = Needs Upload
+  };
 
-//     // A. Find Static Schedule: Sections where this teacher teaches TODAY
-//     // Note: Using "Teacher" (Capital T) because your Section schema uses it.
-//     const scheduledSections = await Section.find({
-//       Teacher: teacherProfile._id,
-//       "Day.Day": dayName
-//     }).populate("Student.Reg_No"); // Need full student details for the roster
+  // 3. Optional: Send the JSON data if requested & already marked
+  if (includeData === "true" && attendance.isLocked) {
+    response.attendance = attendance.students.map(record => ({
+      regNo: record.student?.regNo || "Unknown",
+      name: record.student?.name || "Unknown",
+      status: record.status === "present" ? "Present" : "Absent"
+    }));
+    response.presentCount = attendance.students.filter(s => s.status === "present").length;
+    response.totalStudents = attendance.students.length;
+  }
 
-//     const newSessions = [];
+  res.status(200).json(response);
+});
 
-//     // B. Loop through each class and create an Attendance document
-//     for (const section of scheduledSections) {
-//       // Filter: A section might meet Mon & Wed. Only get TODAY'S time slot.
-//       const validSlots = section.Day.filter(d => d.Day.includes(dayName));
-
-//       for (const slot of validSlots) {
-//         // Double-Check: Prevent duplicate if running twice
-//         const exists = await Attendance.findOne({
-//            section: section._id, date: today, startTime: slot.startTime 
-//         });
-//         if (exists) continue;
-
-//         // Prepare Empty Student List
-//         const studentRecords = section.Student.map(s => ({
-//           student: s.Reg_No._id,
-//           status: "absent", // Default status
-//           faceRecognition: { verified: false }
-//         }));
-
-//         // Create the Session
-//         const session = await Attendance.create({
-//           section: section._id,
-//           course: section.Course,    // Assumes Section has Course ID
-//           markedBy: teacherProfile._id,
-//           date: today,
-//           day: dayName,
-//           startTime: slot.startTime,
-//           endTime: slot.endTime,
-//           roomNo: section.RoomNo,
-//           students: studentRecords,
-//           isLocked: false
-//         });
-
-//         newSessions.push(session);
-//       }
-//     }
-
-//     // C. Re-fetch to get the populated data (Course Names, etc.)
-//     if (newSessions.length > 0) {
-//        todaySessions = await Attendance.find({
-//           markedBy: teacherProfile._id,
-//           date: today
-//        })
-//        .populate("course", "courseName courseCode")
-//        .populate("section", "SectionName RoomNo");
-//     }
-//   }
-
-//   // 4. FORMAT RESPONSE
-//   const data = todaySessions.map(session => ({
-//     id: session._id, // USE THIS ID for Face Uploads
-//     subject: session.course?.courseName || "Unknown",
-//     code: session.course?.courseCode || "",
-//     section: session.section?.SectionName,
-//     time: `${session.startTime} - ${session.endTime}`,
-//     room: session.roomNo,
-//     status: session.isLocked ? "Completed" : "Scheduled", // Status of the class itself
-//     totalStudents: session.students.length,
-//     presentCount: session.totalPresent
-//   }));
-
-//   // Sort by time (09:00 before 10:00)
-//   data.sort((a, b) => a.time.localeCompare(b.time));
-
-//   res.status(200).json({
-//     success: true,
-//     date: today.toDateString(),
-//     count: data.length,
-//     data
-//   });
-// });
-
-// ==========================================================================
-// 2️⃣ MARK ATTENDANCE (FACE RECOGNITION)
-// ==========================================================================
+/* ==========================================================================
+   2️⃣ MARK ATTENDANCE (FACE RECOGNITION + EXCEL DECODE)
+   Route: POST /api/v1/attendance/mark-face/:attendanceId
+========================================================================== */
 export const markAttendanceWithFace = asyncHandler(async (req, res) => {
   const user = req.user;
-
-  // 1. Verify Teacher
-  const teacherProfile = await Teacher.findOne({ email: user.email });
-  if (!teacherProfile) throw new ApiError(403, "Access denied");
-
   const { attendanceId } = req.params;
   const files = req.files || [];
 
-  if (!files.length) throw new ApiError(400, "No images uploaded");
+  // 1. Basic Validation
+  const teacherProfile = await Teacher.findOne({ email: user.email });
+  if (!teacherProfile) throw new ApiError(403, "Access denied");
 
-  // 2. Find the Session
+  if (!files.length) throw new ApiError(400, "No images uploaded");
+  if (files.length > 6) throw new ApiError(400, "Max 6 images allowed.");
+
+  // 2. Get the Attendance List
   const attendance = await Attendance.findById(attendanceId)
-    .populate("students.student", "regNo") // Fetch regNo for matching
+    .populate("students.student", "regNo") 
     .populate("section");
 
-  // if (!attendance) {
-  //   files.forEach((f) => safeDelete(f.path));
-  //   throw new ApiError(404, "Attendance session not found");
-  // }
-
-  // if (attendance.isLocked) {
-  //   files.forEach((f) => safeDelete(f.path));
-  //   throw new ApiError(403, "This class is already locked.");
-  // }
-  if (attendance.isLocked || new Date() > attendance.lockTime) {
-
-    // Optional: Auto-update the boolean for clarity
-    if (!attendance.isLocked) {
-      attendance.isLocked = true;
-      await attendance.save();
-    }
-
-    // Stop execution
-    throw new ApiError(403, "This session is locked. Changes are no longer allowed.");
+  if (!attendance) {
+     files.forEach((f) => safeDelete(f.path));
+     throw new ApiError(404, "Session not found");
   }
 
-  // 3. Process Faces
+  // =========================================================
+  // 🌉 THE BRIDGE: Crossing from Attendance -> Submission
+  // =========================================================
+  
+  // A. Extract all Student IDs
+  const studentIds = attendance.students.map(s => s.student._id);
+  
+  // B. Find Submissions (in 'test' DB) for these students
+  const submissions = await Submission.find({ 
+    student: { $in: studentIds } 
+  }).select("student name"); 
+
+  // C. Create Lookup Dictionary: { "StudentID": "TrainingName" }
+  const studentIdToNameMap = {};
+  submissions.forEach(sub => {
+    if(sub.student) {
+        studentIdToNameMap[sub.student.toString()] = sub.name;
+    }
+  });
+
+  // 3. Send Images to AI
   const imagePaths = files.map((f) => f.path);
+  let batchResult;
 
-  // Call AI Service
-  const batchResult = await processFaceBatch(
-    imagePaths,
-    attendance.section._id.toString()
-  );
-
-  if (!batchResult?.results) {
-    throw new ApiError(500, "Face recognition service failed");
+  try {
+    batchResult = await processFaceBatch(
+      imagePaths,
+      attendance.section._id.toString()
+    );
+  } catch (error) {
+    // ✅ Safety: Delete images if AI crashes
+    files.forEach((f) => safeDelete(f.path));
+    throw new ApiError(500, `AI Service failed: ${error.message}`);
   }
 
-  const presentStudents = new Set();
+  // ✅ Safety: Delete images after success
+  files.forEach((f) => safeDelete(f.path));
 
-  // 4. Update Status based on Matches
-  for (const imgResult of batchResult.results) {
-    if (!imgResult.success) continue;
+  if (!batchResult?.excelBuffer) {
+    throw new ApiError(500, "AI failed to generate Excel report.");
+  }
 
-    for (const match of imgResult.matches) {
-      // Find the student in the list
-      const record = attendance.students.find(
-        (s) => s.student.regNo === match.studentId
-      );
+  // =========================================================
+  // 🧠 LOGIC: DECODE EXCEL -> MATCH NAMES -> UPDATE DB
+  // =========================================================
 
-      if (record && record.status !== "present") {
-        record.status = "present";
-        record.markedAt = new Date();
-        record.faceRecognition = {
-          confidence: match.confidence,
-          verified: match.confidence >= 0.8, // Example threshold
-        };
-        presentStudents.add(match.studentId);
-      }
+  // A. Parse Excel
+  const workbook = xlsx.read(batchResult.excelBuffer, { type: "buffer" });
+  const sheetName = workbook.SheetNames[0];
+  const excelData = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
+  
+  // B. Get Names Detected by AI (Handles multiple header variations)
+  const presentNames = excelData.map(row => row['Name'] || row['name'] || row['Student Name'] || row['Label']);
+  
+//  console.log("📋 AI Detected Names:", presentNames);
+
+  // C. Match & Update
+  const responseList = [];
+  let presentCount = 0;
+
+  attendance.students.forEach((record) => {
+    if (!record.student) return;
+
+    const studentId = record.student._id.toString();
+    
+    // 1. Look up the Training Name
+    const trainingName = studentIdToNameMap[studentId];
+
+    // 2. Check if AI found that name
+    const isPresent = trainingName && presentNames.includes(trainingName);
+
+    // 3. Mark Status
+    if (isPresent) {
+      record.status = "present";
+      record.faceRecognition = { verified: true, confidence: 99 };
+      record.markedAt = new Date();
+      presentCount++;
+    } else {
+      record.status = "absent";
     }
-  }
 
-  // 5. Save & Lock
-  // attendance.isLocked = true;
-  // await attendance.save(); // pre('save') hook calculates totals automatically
+    // 4. Add to JSON Response
+    responseList.push({
+      regNo: record.student.regNo,
+      status: isPresent ? "Present" : "Absent"
+    });
+  });
 
-  // 6. Cleanup Images
-  for (const file of files) {
-    const newPath = path.join(
-      UPLOAD_DIR,
-      `${attendance._id}_${Date.now()}_${file.originalname}`
-    );
-    fs.renameSync(file.path, newPath);
-  }
-  if (batchResult.excelBuffer) {
-    // A. Set Headers so browser knows it's a file
-    res.setHeader(
-      "Content-Type", 
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    );
-    res.setHeader(
-      "Content-Disposition", 
-      `attachment; filename="Attendance_${attendance.section.SectionName}_${Date.now()}.xlsx"`
-    );
+  // 4. Save to Database
+  attendance.isLocked = true;
+  await attendance.save();
 
-    // B. Send the Buffer directly
-    return res.send(batchResult.excelBuffer);
-  }
-
-  res.json({
+  // 5. Return JSON
+  res.status(200).json({
+    present:presentNames,
     success: true,
+    lectureId: attendance._id,
     message: "Attendance marked successfully",
-    presentCount: presentStudents.size,
-    totalStudents: attendance.students.length
+    fileName: `Attendance_${attendanceId}.xlsx`, // Just a reference
+    presentCount: presentCount,
+    totalStudents: attendance.students.length,
+    attendance: responseList
   });
 });
 
-// ==========================================================================
-// 3️⃣ GET SINGLE SESSION (For Details View)
-// ==========================================================================
 /* ==========================================================================
-   📄 GET SESSION DETAILS (Corrected & Secure)
+   3️⃣ GET SESSION DETAILS (Student/Teacher View)
    Route: GET /api/v1/attendance/session/:id
 ========================================================================== */
 export const getSessionDetails = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const user = req.user;
 
-  // 1️⃣ Fetch the Session first
   const session = await Attendance.findById(id)
     .populate("students.student", "name regNo")
     .populate("course", "CourseName courseCode")
     .populate("section", "SectionName")
     .populate("markedBy", "name email");
+
   if (!session) throw new ApiError(404, "Session not found");
 
-  // ==========================================================
-  // 🔎 STUDENT VIEW LOGIC (Must come BEFORE the default response)
-  // ==========================================================
+  // 🎓 STUDENT VIEW
   if (user.role === "student") {
-
-    // A. Get Real Student Profile
     const studentProfile = await Student.findOne({ email: user.email });
-    if (!studentProfile) {
-      throw new ApiError(403, "Student profile not found.");
-    }
+    if (!studentProfile) throw new ApiError(403, "Student profile not found.");
 
-    // B. Find their specific record in the list
     const myRecord = session.students.find(
       (s) => s.student._id.toString() === studentProfile._id.toString()
     );
 
-    // C. Security: If not enrolled, block access
-    if (!myRecord) {
-      throw new ApiError(403, "You are not enrolled in this session.");
-    }
-    const now = new Date();
+    if (!myRecord) throw new ApiError(403, "You are not enrolled in this session.");
     
-    // Create a Date object for when the class STARTS
+    // Calculate Status Display
+    const now = new Date();
     const classStart = new Date(session.date); 
-    const [hours, minutes] = session.startTime.split(':'); // Split "14:30" -> [14, 30]
+    const [hours, minutes] = session.startTime.split(':');
     classStart.setHours(hours, minutes, 0, 0);
 
-    // Determine Status Text
-    let displayStatus = myRecord.status; // Default: 'absent' or 'present'
+    let displayStatus = myRecord.status;
+    if (now < classStart) displayStatus = "Not Started";
 
-    // If the class is in the future, don't show "Absent", show "Not Started"
-    if (now < classStart) {
-        displayStatus = "Not Started";
-    }
-
-    // D. Construct Safe Response
-    const safeResponse = {
-      _id: session._id,
-      courseName: session.course?.CourseName || "Unknown Course",
-      courseCode: session.course?.courseCode,
-      section: session.section?.SectionName,
-      teacher: session.markedBy?.name || "Unknown Teacher",
-
-      date: session.date,
-      day: session.day,
-      time: `${session.startTime} - ${session.endTime}`,
-      room: session.roomNo,
-      topic: session.topic || "No topic added",
-
-      isCompleted: session.isLocked,
-
-      // Only show personal status
-      myStatus: displayStatus,
-      markedAt: myRecord.markedAt,
-      faceVerified: myRecord.faceRecognition?.verified || false
-    };
-
-    // E. Send and RETURN (Stop execution here)
     return res.status(200).json({
       success: true,
-      data: safeResponse
+      data: {
+        _id: session._id,
+        courseName: session.course?.CourseName || "Unknown Course",
+        courseCode: session.course?.courseCode,
+        section: session.section?.SectionName,
+        teacher: session.markedBy?.name || "Unknown Teacher",
+        date: session.date,
+        day: session.day,
+        time: `${session.startTime} - ${session.endTime}`,
+        room: session.roomNo,
+        isCompleted: session.isLocked,
+        myStatus: displayStatus,
+        markedAt: myRecord.markedAt,
+        faceVerified: myRecord.faceRecognition?.verified || false
+      }
     });
   }
 
-  // ==========================================================
-  // 👨‍🏫 TEACHER VIEW (Default Fallback)
-  // If we get here, the user is NOT a student (must be teacher/admin)
-  // ==========================================================
+  // 👨‍🏫 TEACHER VIEW (Default)
   res.status(200).json({
     success: true,
-    data: session // Sends full list with all students
+    data: session 
   });
 });
 
-// ==========================================================================
-// 4️⃣ STUDENT: GET MY ATTENDANCE
-// ==========================================================================
 /* ==========================================================================
-   📊 GET COURSE-WISE ATTENDANCE STATS (Report Card Style)
-   Logic: Fetches all history -> Groups by Course -> Calculates %
+   4️⃣ GET MY ATTENDANCE STATS
    Route: GET /api/v1/attendance/student/stats
 ========================================================================== */
 export const getMyAttendance = asyncHandler(async (req, res) => {
   const user = req.user;
 
-  // 1️⃣ Verify Student
   const studentProfile = await Student.findOne({ email: user.email });
   if (!studentProfile) throw new ApiError(404, "Student profile not found");
 
-  // 2️⃣ Fetch ALL attendance records for this student
   const allRecords = await Attendance.find({
     "students.student": studentProfile._id,
-    isLocked: true // Only count completed classes? Or all? Usually completed.
-  })
-  .populate("course", "CourseName courseCode credits")
-  .lean();
+    isLocked: true 
+  }).populate("course", "CourseName courseCode credits").lean();
 
-  // 3️⃣ AGGREGATE: Group by Course ID
   const courseStats = {};
 
   allRecords.forEach((session) => {
-    // Safety check if course was deleted
     if (!session.course) return;
 
     const courseId = session.course._id.toString();
-    const courseName = session.course.CourseName || session.course.courseName;
-    const courseCode = session.course.courseCode;
-
-    // Find this student's specific status in the session
     const myRecord = session.students.find(
       (s) => s.student.toString() === studentProfile._id.toString()
     );
     const status = myRecord?.status || "absent";
 
-    // Initialize if not exists
     if (!courseStats[courseId]) {
       courseStats[courseId] = {
         courseId,
-        courseName,
-        courseCode,
+        courseName: session.course.CourseName || session.course.courseName,
+        courseCode: session.course.courseCode,
         totalClasses: 0,
         presentCount: 0,
         absentCount: 0
       };
     }
 
-    // Increment Counts
     courseStats[courseId].totalClasses += 1;
-    
-    if (status === "present") {
-      courseStats[courseId].presentCount += 1;
-    } else {
-      courseStats[courseId].absentCount += 1;
-    }
+    if (status === "present") courseStats[courseId].presentCount += 1;
+    else courseStats[courseId].absentCount += 1;
   });
 
-  // 4️⃣ CALCULATE PERCENTAGES & FORMAT
   const reportCard = Object.values(courseStats).map(stat => {
     const percentage = (stat.presentCount / stat.totalClasses) * 100;
-    
     return {
       ...stat,
-      percentage: parseFloat(percentage.toFixed(1)), // Round to 1 decimal (e.g., 85.5)
-      status: percentage >= 75 ? "Safe" : "Low Attendance" // Example logic
+      percentage: parseFloat(percentage.toFixed(1)),
+      status: percentage >= 75 ? "Safe" : "Low Attendance"
     };
   });
 
@@ -421,8 +326,3 @@ export const getMyAttendance = asyncHandler(async (req, res) => {
     data: reportCard
   });
 });
-export default {
-  markAttendanceWithFace,
-  getMyAttendance,
-  getSessionDetails
-}
