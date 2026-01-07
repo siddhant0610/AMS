@@ -16,7 +16,6 @@ const API_TIMEOUT = parseInt(process.env.API_TIMEOUT) || 300000; // 5 Minutes
 // ===============================
 // UTILITIES (Resize & Zip)
 // ===============================
-// ⚠️ KEEP THESE FULL FUNCTIONS! Do not replace them with placeholders.
 const resizeImage = async (imagePath) => {
   const resizedPath = path.join(
     path.dirname(imagePath),
@@ -41,9 +40,11 @@ const zipImagePaths = (imagePaths) => {
       archive.on("error", reject);
 
       archive.on("finish", () => {
+        // Cleanup resized temp files
         for (const tempPath of tempResizedPaths) {
           fs.unlink(tempPath, (err) => {
-            if (err) console.error(`Failed to delete temp file: ${tempPath}`, err);
+             // Just log error, don't reject promise
+             if(err) console.error(`⚠️ Failed to delete resized temp: ${tempPath}`);
           });
         }
         resolve(Buffer.concat(chunks));
@@ -67,7 +68,7 @@ const zipImagePaths = (imagePaths) => {
 };
 
 // ===============================
-// 🧠 MAIN PROCESS
+// 🧠 MAIN PROCESS (The Fix)
 // ===============================
 export const processFaceBatch = async (imagePaths = [], sectionId) => {
   if (!Array.isArray(imagePaths) || imagePaths.length === 0) {
@@ -115,14 +116,18 @@ export const processFaceBatch = async (imagePaths = [], sectionId) => {
     let excelBuffer = null;
 
     zipEntries.forEach((entry) => {
-      // A. Extract JSON Results
+      // A. Extract JSON (Optional)
       if (entry.entryName === "results.json") {
-        const jsonText = entry.getData().toString("utf8");
-        resultsJson = JSON.parse(jsonText);
+        try {
+            const jsonText = entry.getData().toString("utf8");
+            resultsJson = JSON.parse(jsonText);
+        } catch (e) {
+            console.warn("⚠️ Could not parse results.json, skipping...");
+        }
       }
 
-      // B. Extract Excel File
-     if (
+      // B. Extract Master Excel (Critical)
+      if (
         entry.entryName.includes("consolidated") && 
         entry.entryName.endsWith(".xlsx")
       ) {
@@ -131,11 +136,14 @@ export const processFaceBatch = async (imagePaths = [], sectionId) => {
       }
     });
 
-    if (!resultsJson) throw new Error("Results zip missing 'results.json'");
+    // ✅ THE FIX: We are happy if we have the Excel file. 
+    // We do NOT throw error if resultsJson is missing.
+    if (!excelBuffer && !resultsJson) {
+        throw new Error("AI failed: No Excel report found in ZIP.");
+    }
 
-    // 5. Structure the return (The "Safe" Logic)
-    // Checks if resultsJson is { results: [...] } OR just [...]
-    const finalResults = resultsJson.results || resultsJson; 
+    // Safely extract results array if it exists, otherwise empty array
+    const finalResults = resultsJson ? (resultsJson.results || resultsJson) : [];
 
     return {
       success: true,
@@ -145,6 +153,7 @@ export const processFaceBatch = async (imagePaths = [], sectionId) => {
 
   } catch (error) {
     console.error("❌ Error in processFaceBatch:", error.message);
-    return { success: false, message: error.message, results: [] };
+    // Rethrow so the controller knows it failed
+    throw error; 
   }
 };
