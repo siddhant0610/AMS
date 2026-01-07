@@ -17,7 +17,7 @@ import TeacherRoute from './router/Teacher.route.js';
 import StudentRoute from './router/student.route.js';
 import router from './router/sectionRoutes.js';
 import Courserouter from './router/Course.Routes.js';
-import attendance from './router/attendance.routes.js';
+import attendance from './router/Attendance.routes.js';
 import loginRoute from './router/login.routes.js';
 import dashboardRouter from './router/dashboard.route.js';
 //import AdminRoute from './router/Admin.routes.js';
