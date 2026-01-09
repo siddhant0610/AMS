@@ -1,7 +1,10 @@
 import { asyncHandler } from "../asyncHandler.js";
+import { ApiError } from "../utils/api.Error.js";
 import { Teacher } from "../modules/Teacher.js";
 import { Student } from "../modules/Student.js";
-import { Section } from "../modules/Section.js";
+import { Section } from "../modules/Section.js"; 
+// 👇 CRITICAL IMPORT: Needed to create the attendance sessions
+import { Attendance } from "../modules/Attendance.js"; 
 
 /* ============================================================
    🇮🇳 TIME UTILITIES (Fixes Time Zone Issues)
@@ -35,70 +38,124 @@ const formatTimeIST = (timeValue) => {
 };
 
 /* ============================================================
-   👨‍🏫 TEACHER DASHBOARD
+   👨‍🏫 TEACHER DASHBOARD (Auto-Create + IST Fix)
 ============================================================ */
 export const getTeacherDashboard = asyncHandler(async (req, res) => {
   const user = req.user;
   
-  // ✅ FIX: Get the day name according to INDIA
-  const todayName = getIndiaDayName(); 
+  // 🕒 1. Time Setup (IST)
+  const todayName = getIndiaDayName(); // e.g., "Friday"
+  const todayDate = getIndiaDate();    // Current IST Date
+  todayDate.setHours(0, 0, 0, 0);      // Normalize to Midnight for DB consistency
 
-  // 1️⃣ BRIDGE: Find Teacher Profile
+  // 🌉 2. Find Teacher
   const teacherProfile = await Teacher.findOne({ email: user.email });
-
   if (!teacherProfile) {
-    return res.status(200).json({ 
-      success: true, 
-      message: "Teacher profile not found for this user.", 
-      schedule: [] 
-    });
+    return res.status(200).json({ success: true, message: "Teacher not found", schedule: [] });
   }
 
-  // 2️⃣ QUERY: Find Sections for Today
-  const sections = await Section.find({
-    Teacher: teacherProfile._id,   
-    "Day.Day": todayName           
+  // 🔍 3. CHECK: Do sessions already exist for today?
+  let todaySessions = await Attendance.find({
+    markedBy: teacherProfile._id,
+    date: todayDate // Checks for 00:00:00 today
   })
-  .populate("Course", "CourseName courseCode")
-  .populate("Teacher", "name");
+  .populate("course", "CourseName courseCode")
+  .populate("section", "SectionName RoomNo");
 
-  // 3️⃣ FILTER & FORMAT
-  let schedule = [];
+  // 🚀 4. AUTO-CREATE (If list is empty, generate from Schedule)
+  if (todaySessions.length === 0) {
+    console.log(`⚡ Generating attendance sessions for ${teacherProfile.name} on ${todayName}...`);
 
-  sections.forEach((sec) => {
-    // Filter specifically for today's slot(s)
-    const todaySlots = sec.Day.filter(d => d.Day.includes(todayName));
+    // A. Find Static Schedule for Today
+    const sections = await Section.find({
+      Teacher: teacherProfile._id,   
+      "Day.Day": todayName           
+    }).populate("Student.Reg_No"); // Need students to initialize the register
 
-    todaySlots.forEach(slot => {
-      // ✅ FIX: Format times to avoid UTC confusion
-      const startTime = formatTimeIST(slot.startTime);
-      const endTime = formatTimeIST(slot.endTime);
+    const newSessions = [];
 
-      schedule.push({
-        Section_id: sec._id,            
-        subject: sec.Course?.CourseName || "Unknown Course",
-        courseCode: sec.Course?.courseCode || "",
-        section_name: sec.SectionName,
+    // B. Loop and Create
+    for (const sec of sections) {
+      const todaySlots = sec.Day.filter(d => d.Day.includes(todayName));
+
+      for (const slot of todaySlots) {
+        // Double Check: Avoid duplicates
+        const exists = await Attendance.findOne({
+           section: sec._id, date: todayDate, startTime: slot.startTime 
+        });
+        if (exists) continue;
+
+        // Prepare Student List (Default: Absent)
+        const studentRecords = sec.Student.map(s => {
+            if(!s.Reg_No) return null;
+            return {
+              student: s.Reg_No._id,
+              status: "absent",
+              faceRecognition: { verified: false }
+            };
+        }).filter(s => s !== null);
+
+        // Create Session in DB
+        const session = await Attendance.create({
+          section: sec._id,
+          course: sec.Course, 
+          markedBy: teacherProfile._id,
+          
+          date: todayDate,  // Saving standardized IST Midnight date
+          day: todayName,
+          
+          startTime: slot.startTime,
+          endTime: slot.endTime,
+          roomNo: sec.RoomNo,
+          students: studentRecords,
+          isLocked: false
+        });
         
-        // Time is now safe & clean
-        time: `${startTime} - ${endTime}`,
-        
-        Building: sec.Building,
-        room: sec.RoomNo,
-        status: slot.completed === "NA" ? "Scheduled" : "Completed",
-        totalStudents: sec.Student.length
-      });
-    });
+        newSessions.push(session);
+      }
+    }
+
+    // C. Refresh List if we created new ones
+    if (newSessions.length > 0) {
+       todaySessions = await Attendance.find({
+         markedBy: teacherProfile._id,
+         date: todayDate
+       })
+       .populate("course", "CourseName courseCode")
+       .populate("section", "SectionName RoomNo");
+    }
+  }
+
+  // 📊 5. FORMAT RESPONSE
+  const schedule = todaySessions.map((session) => {
+    // Format Times correctly (IST)
+    const startStr = formatTimeIST(session.startTime);
+    const endStr = formatTimeIST(session.endTime);
+
+    return {
+      lecture_id: session._id, // <--- Used for Face Upload
+      subject: session.course?.CourseName || session.course?.courseName || "Unknown Course",
+      courseCode: session.course?.courseCode || "",
+      section_name: session.section?.SectionName,
+      
+      // Clean Time Display
+      time: `${startStr} - ${endStr}`,
+      
+      room: session.roomNo,
+      status: session.isLocked ? "Completed" : "Scheduled",
+      totalStudents: session.students.length,
+      presentCount: session.totalPresent || 0
+    };
   });
 
-  // 4️⃣ SORT: Earliest class first
+  // Sort by Time
   schedule.sort((a, b) => a.time.localeCompare(b.time));
 
   return res.status(200).json({
     success: true,
     role: "teacher",
     teacherName: teacherProfile.name,
-    date: getIndiaDate().toDateString(), // ✅ FIX: Send IST Date string
+    date: getIndiaDate().toDateString(),
     day: todayName,
     count: schedule.length,
     schedule
@@ -106,26 +163,17 @@ export const getTeacherDashboard = asyncHandler(async (req, res) => {
 });
 
 /* ============================================================
-   👨‍🎓 STUDENT DASHBOARD
+   👨‍🎓 STUDENT DASHBOARD (Reads Static Schedule)
 ============================================================ */
 export const getStudentDashboard = asyncHandler(async (req, res) => {
   const user = req.user;
-  
-  // ✅ FIX: Get the day name according to INDIA
   const todayName = getIndiaDayName();
 
-  // 1️⃣ BRIDGE: Find Student Profile
   const studentProfile = await Student.findOne({ email: user.email });
-
   if (!studentProfile) {
-    return res.status(200).json({ 
-      success: true, 
-      message: "Student profile not found.", 
-      schedule: [] 
-    });
+    return res.status(200).json({ success: true, message: "Student not found", schedule: [] });
   }
 
-  // 2️⃣ CHECK ENROLLMENT: Find Sections containing this Student
   const sections = await Section.find({
     "Student.Reg_No": studentProfile._id,
     "Day.Day": todayName
@@ -133,40 +181,34 @@ export const getStudentDashboard = asyncHandler(async (req, res) => {
   .populate("Course", "CourseName courseCode")
   .populate("Teacher", "name");
 
-  // 3️⃣ FILTER & FORMAT
   let schedule = [];
 
   sections.forEach((sec) => {
     const todaySlots = sec.Day.filter(d => d.Day.includes(todayName));
 
     todaySlots.forEach(slot => {
-      // ✅ FIX: Format times
-      const startTime = formatTimeIST(slot.startTime);
-      const endTime = formatTimeIST(slot.endTime);
+      const startStr = formatTimeIST(slot.startTime);
+      const endStr = formatTimeIST(slot.endTime);
 
       schedule.push({
         id: sec._id,
         subject: sec.Course?.CourseName || "Unknown Course",
         courseCode: sec.Course?.courseCode || "",
         teacher: sec.Teacher?.name || "TBD",
-        
-        // Time is now safe & clean
-        time: `${startTime} - ${endTime}`,
-        
+        time: `${startStr} - ${endStr}`,
         room: sec.RoomNo,
         status: "Pending" 
       });
     });
   });
 
-  // 4️⃣ SORT
   schedule.sort((a, b) => a.time.localeCompare(b.time));
 
   return res.status(200).json({
     success: true,
     role: "student",
     studentName: studentProfile.name,
-    date: getIndiaDate().toDateString(), // ✅ FIX: Send IST Date string
+    date: getIndiaDate().toDateString(),
     day: todayName,
     count: schedule.length,
     schedule
