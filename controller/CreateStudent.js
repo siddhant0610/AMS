@@ -3,10 +3,10 @@ import { Section } from "../modules/Section.js";
 import { asyncHandler } from "../asyncHandler.js";
 
 const CreateStudent = asyncHandler(async (req, res) => {
-    const { name, email, regNo, course, department, Semester, password, sectionId } = req.body;
+    const { name, email, regNo, course, sectionId } = req.body;
     
     // Validate required fields
-    if (!name || !email || !regNo || !course || !department || !Semester || !password) {
+    if (!name || !email || !regNo || !course) {
         return res.status(400).json({
             success: false,
             message: "All fields are required"
