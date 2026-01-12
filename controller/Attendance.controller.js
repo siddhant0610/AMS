@@ -27,43 +27,27 @@ const safeDelete = (filePath) => {
     console.warn(`⚠️ Warning: Could not delete temp file: ${filePath}. Windows lock active.`);
   }
 };
-
 /* ==========================================================================
-   1️⃣ CHECK STATUS (Idempotency Check)
+   1️⃣ CHECK STATUS (is-marked)
+   Returns: { success: true, lectureId: "...", isMarked: true/false }
 ========================================================================== */
 export const checkAttendanceStatus = asyncHandler(async (req, res) => {
   const { attendanceId } = req.params;
-  const { includeData } = req.query; 
 
-  let query = Attendance.findById(attendanceId).select("isLocked section course students");
-  if (includeData === "true") {
-    query = query.populate("students.student", "name regNo");
-  }
-
-  const attendance = await query;
+  const attendance = await Attendance.findById(attendanceId).select("isLocked");
+  
   if (!attendance) throw new ApiError(404, "Session not found");
 
-  const response = {
+  res.status(200).json({
     success: true,
-    attendanceId: attendance._id,
-    isMarked: attendance.isLocked,
-  };
-
-  if (includeData === "true" && attendance.isLocked) {
-    response.attendance = attendance.students.map(record => ({
-      regNo: record.student?.regNo || "Unknown",
-      name: record.student?.name || "Unknown",
-      status: record.status === "present" ? "Present" : "Absent"
-    }));
-    response.presentCount = attendance.students.filter(s => s.status === "present").length;
-    response.totalStudents = attendance.students.length;
-  }
-
-  res.status(200).json(response);
+    lectureId: attendance._id,
+    isMarked: attendance.isLocked
+  });
 });
 
 /* ==========================================================================
-   2️⃣ MARK ATTENDANCE (DIRECT MATCHING + ROBUST LOGIC)
+   2️⃣ MARK ATTENDANCE (mark-face)
+   Returns: { success, lectureId, message, fileName, attendance: [...] }
 ========================================================================== */
 export const markAttendanceWithFace = asyncHandler(async (req, res) => {
   const user = req.user;
@@ -75,11 +59,10 @@ export const markAttendanceWithFace = asyncHandler(async (req, res) => {
   if (!teacherProfile) throw new ApiError(403, "Access denied");
 
   if (!files.length) throw new ApiError(400, "No images uploaded");
-  if (files.length > 6) throw new ApiError(400, "Max 6 images allowed.");
 
-  // 2. Get Attendance List (Populate Name for matching)
+  // 2. Fetch Session
   const attendance = await Attendance.findById(attendanceId)
-    .populate("students.student", "name regNo") // 👈 Need 'name' to match AI output
+    .populate("students.student", "name regNo") 
     .populate("section");
 
   if (!attendance) {
@@ -87,7 +70,7 @@ export const markAttendanceWithFace = asyncHandler(async (req, res) => {
      throw new ApiError(404, "Session not found");
   }
 
-  // 3. Send Images to AI
+  // 3. AI Processing
   const imagePaths = files.map((f) => f.path);
   let batchResult;
 
@@ -101,54 +84,33 @@ export const markAttendanceWithFace = asyncHandler(async (req, res) => {
     throw new ApiError(500, `AI Service failed: ${error.message}`);
   }
 
-  // Cleanup images
+  // Cleanup
   files.forEach((f) => safeDelete(f.path));
 
   // =========================================================
-  // 🧠 LOGIC: ROBUST MATCHING (Case Insensitive)
+  // 🧠 LOGIC: ROBUST MATCHING
   // =========================================================
 
-  // Extract names from JSON result
   const detectedList = batchResult.results || [];
-  console.log("📋 AI JSON Results:", detectedList);
-
-  // 1. Create a Set of "Normalized" names from AI for fast, case-insensitive lookup
-  const presentNamesSet = new Set();
   
+  // A. Create Normalized Set
+  const presentNamesSet = new Set();
   detectedList.forEach(item => {
-    let rawName = "";
-    if (typeof item === 'string') rawName = item;
-    else rawName = item.label || item.name || item.student_name || "";
-
-    if (rawName) {
-        // Store as "siddhant sharma" (lowercase, trimmed)
-        presentNamesSet.add(rawName.toLowerCase().trim());
-    }
+    let rawName = typeof item === 'string' ? item : (item.label || item.name || "");
+    if (rawName) presentNamesSet.add(rawName.toLowerCase().trim());
   });
 
   const responseList = [];
   let presentCount = 0;
 
-  // IST Date Formatter Helper
-  const formatIST = (d) => d ? new Date(d).toLocaleTimeString("en-IN", { 
-    timeZone: "Asia/Kolkata", 
-    hour: "2-digit", 
-    minute: "2-digit", 
-    second: "2-digit",
-    hour12: true 
-  }) : "-";
-
+  // B. Match & Update
   attendance.students.forEach((record) => {
     if (!record.student) return;
 
-    // 2. Normalize DB Name
     const dbName = record.student.name || "";
     const normalizedDbName = dbName.toLowerCase().trim();
-
-    // 3. Compare (Does "siddhant" exist in the AI set?)
     const isPresent = normalizedDbName && presentNamesSet.has(normalizedDbName);
 
-    // Update Status
     if (isPresent) {
       record.status = "present";
       record.faceRecognition = { verified: true, confidence: 99 };
@@ -158,23 +120,25 @@ export const markAttendanceWithFace = asyncHandler(async (req, res) => {
       record.status = "absent";
     }
 
+    // Build the JSON Array Response
     responseList.push({
       regNo: record.student.regNo,
-      status: isPresent ? "Present" : "Absent",
-      markedTime: isPresent ? formatIST(record.markedAt) : "-"
+      status: isPresent ? "Present" : "Absent"
     });
   });
 
-  // 4. Save & Return
+  // 4. Save
   attendance.isLocked = true;
   await attendance.save();
 
+  // =========================================================
+  // ✅ JSON RESPONSE (Matches your requirement exactly)
+  // =========================================================
   res.status(200).json({
     success: true,
     lectureId: attendance._id,
     message: "Attendance marked successfully",
-    presentCount: presentCount,
-    totalStudents: attendance.students.length,
+    fileName: `Attendance_${attendance._id}.xlsx`, // Just a string for Frontend to use
     attendance: responseList
   });
 });

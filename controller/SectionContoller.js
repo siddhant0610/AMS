@@ -217,26 +217,34 @@ export const DeleteSection = asyncHandler(async (req, res) => {
    ✅ ADD STUDENT TO SECTION
 ========================================================== */
 export const AddStudentToSection = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  const { studentId } = req.body;
+  const { SectionName } = req.params;     // Section ID
+  const { regNo} = req.body; // Student's _id (or regNo, depending on your frontend)
 
-  const section = await Section.findById(id).populate("Course");
-  const student = await Student.findById(studentId);
-  if (!section || !student)
+  // 1. Fetch Section & Student (Validation)
+  const section = await Section.findOne({ SectionName }).populate("Course");
+  const student = await Student.findOne({ regNo });
+  if (!section || !student) {
     return res.status(404).json({ success: false, message: "Section or Student not found" });
+  }
 
-  const exists = section.Student.some((s) => s.Reg_No.toString() === studentId);
-  if (exists)
+  // 2. CHECK: Is student already in the Roster?
+  // We check the SECTION's list only.
+  const exists = section.Student.some((s) => s.Reg_No.toString() === student._id.toString());
+  if (exists) {
     return res.status(400).json({ success: false, message: "Student already enrolled" });
+  }
 
-  section.Student.push({ Reg_No: studentId });
+  // 3. UPDATE: Add to Section Roster ONLY
+  // This is the "Single Source of Truth". We do NOT touch the Student document.
+  section.Student.push({ Reg_No: student._id});
+  if (!section.Building) {
+    section.Building = "Main Block"; // Or any default value
+  }
   await section.save();
 
-  await Student.findByIdAndUpdate(studentId, {
-    $addToSet: { enrolledCourses: { course: section.Course._id, section: section._id } },
-  });
-
-  const updated = await Section.findById(id)
+  // 4. Return Updated Data
+  // We populate everything so the frontend updates immediately
+  const updated = await Section.findOne({ SectionName })
     .populate("Student.Reg_No", "name regNo email")
     .populate("Course", "CourseName courseCode")
     .populate("Teacher", "name email");
@@ -247,7 +255,6 @@ export const AddStudentToSection = asyncHandler(async (req, res) => {
     data: updated,
   });
 });
-
 /* ==========================================================
    ✅ REMOVE STUDENT FROM SECTION
 ========================================================== */
