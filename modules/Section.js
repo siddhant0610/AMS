@@ -9,7 +9,7 @@ import { Course } from "./Course.js";
 // ===============================
 const SectionSchema = new mongoose.Schema(
   {
-    SectionName: { type: String, required: true, },
+    SectionName: { type: String, required: true,unique:true },
     // section can have multiple courses and teachers 
     Course: {
       type: mongoose.Schema.Types.ObjectId,

@@ -23,7 +23,7 @@ router.delete('/:id', DeleteSection);
 router.put('/:id/schedule', AddScheduleToSection);
 
 // Student management
-router.post('/:id/students', AddStudentToSection);
+router.post('/:SectionName/add', AddStudentToSection);
 router.delete('/:id/students/:studentId', RemoveStudentFromSection);
 
 // Attendance
