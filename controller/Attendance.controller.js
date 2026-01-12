@@ -3,65 +3,52 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { asyncHandler } from "../asyncHandler.js";
 import { ApiError } from "../utils/api.Error.js";
-import xlsx from "xlsx"; // 👈 Used to read the AI Excel report
 
 // Models
 import { Attendance } from "../modules/Attendance.js"; 
 import { Section } from "../modules/Section.js";       
 import { Teacher } from "../modules/Teacher.js";
 import { Student } from "../modules/Student.js";
-import { Submission } from "../modules/Submission.js"; // ⚠️ Check this path matches your folder structure
+// ❌ Submission Import Removed
 
 // Services
 import { processFaceBatch } from "../Services/faceRecognition.js"; 
 
-// ===============================
-// 🔧 CONFIG & HELPERS
-// ===============================
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ✅ FIX: "Gentle" Delete - Ignores errors if file is locked
+// ✅ SAFE DELETE
 const safeDelete = (filePath) => {
   try {
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
     }
   } catch (error) {
-    console.warn(`⚠️ Warning: Could not delete temp file: ${filePath}. It might be locked by Windows.`);
+    console.warn(`⚠️ Warning: Could not delete temp file: ${filePath}. Windows lock active.`);
   }
 };
 
 /* ==========================================================================
    1️⃣ CHECK STATUS (Idempotency Check)
-   Route: GET /api/v1/attendance/status/:attendanceId
 ========================================================================== */
 export const checkAttendanceStatus = asyncHandler(async (req, res) => {
   const { attendanceId } = req.params;
-  const { includeData } = req.query; // ?includeData=true
+  const { includeData } = req.query; 
 
-  // 1. Find the Session (Lightweight query first)
-  let query = Attendance.findById(attendanceId).select("isMarked section course students");
-  
+  let query = Attendance.findById(attendanceId).select("isLocked section course students");
   if (includeData === "true") {
-    // If frontend wants data immediately, fetch names
     query = query.populate("students.student", "name regNo");
   }
 
   const attendance = await query;
+  if (!attendance) throw new ApiError(404, "Session not found");
 
-  if (!attendance) {
-    throw new ApiError(404, "Session not found");
-  }
-
-  // 2. Prepare Response
   const response = {
     success: true,
     attendanceId: attendance._id,
-    isMarked: attendance.isLocked, // ✅ True = Already Done, False = Needs Upload
+    isMarked: attendance.isLocked,
   };
 
-  // 3. Optional: Send the JSON data if requested & already marked
   if (includeData === "true" && attendance.isLocked) {
     response.attendance = attendance.students.map(record => ({
       regNo: record.student?.regNo || "Unknown",
@@ -76,50 +63,29 @@ export const checkAttendanceStatus = asyncHandler(async (req, res) => {
 });
 
 /* ==========================================================================
-   2️⃣ MARK ATTENDANCE (FACE RECOGNITION + EXCEL DECODE)
-   Route: POST /api/v1/attendance/mark-face/:attendanceId
+   2️⃣ MARK ATTENDANCE (DIRECT MATCHING + ROBUST LOGIC)
 ========================================================================== */
 export const markAttendanceWithFace = asyncHandler(async (req, res) => {
   const user = req.user;
   const { attendanceId } = req.params;
   const files = req.files || [];
 
-  // 1. Basic Validation
+  // 1. Validation
   const teacherProfile = await Teacher.findOne({ email: user.email });
   if (!teacherProfile) throw new ApiError(403, "Access denied");
 
   if (!files.length) throw new ApiError(400, "No images uploaded");
   if (files.length > 6) throw new ApiError(400, "Max 6 images allowed.");
 
-  // 2. Get the Attendance List
+  // 2. Get Attendance List (Populate Name for matching)
   const attendance = await Attendance.findById(attendanceId)
-    .populate("students.student", "regNo") 
+    .populate("students.student", "name regNo") // 👈 Need 'name' to match AI output
     .populate("section");
 
   if (!attendance) {
      files.forEach((f) => safeDelete(f.path));
      throw new ApiError(404, "Session not found");
   }
-
-  // =========================================================
-  // 🌉 THE BRIDGE: Crossing from Attendance -> Submission
-  // =========================================================
-  
-  // A. Extract all Student IDs
-  const studentIds = attendance.students.map(s => s.student._id);
-  
-  // B. Find Submissions (in 'test' DB) for these students
-  const submissions = await Submission.find({ 
-    student: { $in: studentIds } 
-  }).select("student name"); 
-
-  // C. Create Lookup Dictionary: { "StudentID": "TrainingName" }
-  const studentIdToNameMap = {};
-  submissions.forEach(sub => {
-    if(sub.student) {
-        studentIdToNameMap[sub.student.toString()] = sub.name;
-    }
-  });
 
   // 3. Send Images to AI
   const imagePaths = files.map((f) => f.path);
@@ -131,75 +97,82 @@ export const markAttendanceWithFace = asyncHandler(async (req, res) => {
       attendance.section._id.toString()
     );
   } catch (error) {
-    // ✅ Safety: Delete images if AI crashes
     files.forEach((f) => safeDelete(f.path));
     throw new ApiError(500, `AI Service failed: ${error.message}`);
   }
 
-  // ✅ Safety: Delete images after success
+  // Cleanup images
   files.forEach((f) => safeDelete(f.path));
 
-  if (!batchResult?.excelBuffer) {
-    throw new ApiError(500, "AI failed to generate Excel report.");
-  }
-
   // =========================================================
-  // 🧠 LOGIC: DECODE EXCEL -> MATCH NAMES -> UPDATE DB
+  // 🧠 LOGIC: ROBUST MATCHING (Case Insensitive)
   // =========================================================
 
-  // A. Parse Excel
-  const workbook = xlsx.read(batchResult.excelBuffer, { type: "buffer" });
-  const sheetName = workbook.SheetNames[0];
-  const excelData = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
-  
-  // B. Get Names Detected by AI (Handles multiple header variations)
-  const presentNames = excelData.map(row => row['Name'] || row['name'] || row['Student Name'] || row['Label']);
-  
-//  console.log("📋 AI Detected Names:", presentNames);
+  // Extract names from JSON result
+  const detectedList = batchResult.results || [];
+  console.log("📋 AI JSON Results:", detectedList);
 
-  // C. Match & Update
+  // 1. Create a Set of "Normalized" names from AI for fast, case-insensitive lookup
+  const presentNamesSet = new Set();
+  
+  detectedList.forEach(item => {
+    let rawName = "";
+    if (typeof item === 'string') rawName = item;
+    else rawName = item.label || item.name || item.student_name || "";
+
+    if (rawName) {
+        // Store as "siddhant sharma" (lowercase, trimmed)
+        presentNamesSet.add(rawName.toLowerCase().trim());
+    }
+  });
+
   const responseList = [];
   let presentCount = 0;
+
+  // IST Date Formatter Helper
+  const formatIST = (d) => d ? new Date(d).toLocaleTimeString("en-IN", { 
+    timeZone: "Asia/Kolkata", 
+    hour: "2-digit", 
+    minute: "2-digit", 
+    second: "2-digit",
+    hour12: true 
+  }) : "-";
 
   attendance.students.forEach((record) => {
     if (!record.student) return;
 
-    const studentId = record.student._id.toString();
-    
-    // 1. Look up the Training Name
-    const trainingName = studentIdToNameMap[studentId];
+    // 2. Normalize DB Name
+    const dbName = record.student.name || "";
+    const normalizedDbName = dbName.toLowerCase().trim();
 
-    // 2. Check if AI found that name
-    const isPresent = trainingName && presentNames.includes(trainingName);
+    // 3. Compare (Does "siddhant" exist in the AI set?)
+    const isPresent = normalizedDbName && presentNamesSet.has(normalizedDbName);
 
-    // 3. Mark Status
+    // Update Status
     if (isPresent) {
       record.status = "present";
       record.faceRecognition = { verified: true, confidence: 99 };
-      record.markedAt = new Date();
+      record.markedAt = new Date(); 
       presentCount++;
     } else {
       record.status = "absent";
     }
 
-    // 4. Add to JSON Response
     responseList.push({
       regNo: record.student.regNo,
-      status: isPresent ? "Present" : "Absent"
+      status: isPresent ? "Present" : "Absent",
+      markedTime: isPresent ? formatIST(record.markedAt) : "-"
     });
   });
 
-  // 4. Save to Database
+  // 4. Save & Return
   attendance.isLocked = true;
   await attendance.save();
 
-  // 5. Return JSON
   res.status(200).json({
-    present:presentNames,
     success: true,
     lectureId: attendance._id,
     message: "Attendance marked successfully",
-    fileName: `Attendance_${attendanceId}.xlsx`, // Just a reference
     presentCount: presentCount,
     totalStudents: attendance.students.length,
     attendance: responseList
@@ -207,8 +180,7 @@ export const markAttendanceWithFace = asyncHandler(async (req, res) => {
 });
 
 /* ==========================================================================
-   3️⃣ GET SESSION DETAILS (Student/Teacher View)
-   Route: GET /api/v1/attendance/session/:id
+   3️⃣ GET SESSION DETAILS
 ========================================================================== */
 export const getSessionDetails = asyncHandler(async (req, res) => {
   const { id } = req.params;
@@ -222,7 +194,6 @@ export const getSessionDetails = asyncHandler(async (req, res) => {
 
   if (!session) throw new ApiError(404, "Session not found");
 
-  // 🎓 STUDENT VIEW
   if (user.role === "student") {
     const studentProfile = await Student.findOne({ email: user.email });
     if (!studentProfile) throw new ApiError(403, "Student profile not found.");
@@ -233,11 +204,9 @@ export const getSessionDetails = asyncHandler(async (req, res) => {
 
     if (!myRecord) throw new ApiError(403, "You are not enrolled in this session.");
     
-    // Calculate Status Display
     const now = new Date();
-    const classStart = new Date(session.date); 
-    const [hours, minutes] = session.startTime.split(':');
-    classStart.setHours(hours, minutes, 0, 0);
+    // Assuming startTime is a Date object (Loosely Coupled)
+    const classStart = new Date(session.startTime); 
 
     let displayStatus = myRecord.status;
     if (now < classStart) displayStatus = "Not Started";
@@ -252,7 +221,7 @@ export const getSessionDetails = asyncHandler(async (req, res) => {
         teacher: session.markedBy?.name || "Unknown Teacher",
         date: session.date,
         day: session.day,
-        time: `${session.startTime} - ${session.endTime}`,
+        time: `${new Date(session.startTime).toLocaleTimeString("en-IN", {hour:"2-digit", minute:"2-digit", timeZone:"Asia/Kolkata"})} - ${new Date(session.endTime).toLocaleTimeString("en-IN", {hour:"2-digit", minute:"2-digit", timeZone:"Asia/Kolkata"})}`,
         room: session.roomNo,
         isCompleted: session.isLocked,
         myStatus: displayStatus,
@@ -262,7 +231,6 @@ export const getSessionDetails = asyncHandler(async (req, res) => {
     });
   }
 
-  // 👨‍🏫 TEACHER VIEW (Default)
   res.status(200).json({
     success: true,
     data: session 
@@ -271,7 +239,6 @@ export const getSessionDetails = asyncHandler(async (req, res) => {
 
 /* ==========================================================================
    4️⃣ GET MY ATTENDANCE STATS
-   Route: GET /api/v1/attendance/student/stats
 ========================================================================== */
 export const getMyAttendance = asyncHandler(async (req, res) => {
   const user = req.user;

@@ -43,7 +43,6 @@ const zipImagePaths = (imagePaths) => {
         // Cleanup resized temp files
         for (const tempPath of tempResizedPaths) {
           fs.unlink(tempPath, (err) => {
-             // Just log error, don't reject promise
              if(err) console.error(`⚠️ Failed to delete resized temp: ${tempPath}`);
           });
         }
@@ -68,7 +67,7 @@ const zipImagePaths = (imagePaths) => {
 };
 
 // ===============================
-// 🧠 MAIN PROCESS (The Fix)
+// 🧠 MAIN PROCESS (Updated for 'attendance' Key)
 // ===============================
 export const processFaceBatch = async (imagePaths = [], sectionId) => {
   if (!Array.isArray(imagePaths) || imagePaths.length === 0) {
@@ -97,63 +96,63 @@ export const processFaceBatch = async (imagePaths = [], sectionId) => {
     });
 
     const predictData = res.data;
-    if (!predictData.results_zip) throw new Error("API response missing 'results_zip'");
-
-    console.log(`✅ AI Processed. Fetching results from: ${predictData.results_zip}`);
-
-    // 3. Download the Result Zip
-    const zipUrl = PREDICT_API_URL + predictData.results_zip;
-    const zipRes = await axios.get(zipUrl, {
-      responseType: "arraybuffer",
-      timeout: API_TIMEOUT,
-    });
-
-    // 4. Extract Data (JSON + EXCEL)
-    const zip = new AdmZip(Buffer.from(zipRes.data));
-    const zipEntries = zip.getEntries();
-
-    let resultsJson = null;
-    let excelBuffer = null;
-
-    zipEntries.forEach((entry) => {
-      // A. Extract JSON (Optional)
-      if (entry.entryName === "results.json") {
-        try {
-            const jsonText = entry.getData().toString("utf8");
-            resultsJson = JSON.parse(jsonText);
-        } catch (e) {
-            console.warn("⚠️ Could not parse results.json, skipping...");
-        }
-      }
-
-      // B. Extract Master Excel (Critical)
-      if (
-        entry.entryName.includes("consolidated") && 
-        entry.entryName.endsWith(".xlsx")
-      ) {
-        console.log(`🎯 FOUND MASTER REPORT: ${entry.entryName}`);
-        excelBuffer = entry.getData(); 
-      }
-    });
-
-    // ✅ THE FIX: We are happy if we have the Excel file. 
-    // We do NOT throw error if resultsJson is missing.
-    if (!excelBuffer && !resultsJson) {
-        throw new Error("AI failed: No Excel report found in ZIP.");
+    
+    // =========================================================
+    // 🕵️ DETECT RESPONSE TYPE
+    // =========================================================
+    
+    // ✅ SCENARIO A: New Format (Key is 'attendance')
+    if (predictData.attendance) {
+        console.log(`✅ Received 'attendance' list with ${predictData.attendance.length} students.`);
+        return { success: true, results: predictData.attendance };
     }
 
-    // Safely extract results array if it exists, otherwise empty array
-    const finalResults = resultsJson ? (resultsJson.results || resultsJson) : [];
+    // ✅ SCENARIO B: Standard JSON (Key is 'results' or direct array)
+    if (predictData.results || Array.isArray(predictData)) {
+        console.log("✅ Received Direct JSON Results.");
+        const finalResults = predictData.results || predictData;
+        return { success: true, results: finalResults };
+    }
 
-    return {
-      success: true,
-      results: finalResults, 
-      excelBuffer: excelBuffer 
-    };
+    // ✅ SCENARIO C: Zip File (Legacy/Fallback)
+    if (predictData.results_zip) {
+        console.log(`✅ Received ZIP. Fetching from: ${predictData.results_zip}`);
+        
+        const zipUrl = PREDICT_API_URL + predictData.results_zip;
+        const zipRes = await axios.get(zipUrl, {
+            responseType: "arraybuffer",
+            timeout: API_TIMEOUT,
+        });
+
+        const zip = new AdmZip(Buffer.from(zipRes.data));
+        const zipEntries = zip.getEntries();
+        let resultsJson = null;
+
+        zipEntries.forEach((entry) => {
+            if (entry.entryName === "results.json") {
+                try {
+                    const jsonText = entry.getData().toString("utf8");
+                    resultsJson = JSON.parse(jsonText);
+                } catch (e) {
+                    console.warn("⚠️ Could not parse results.json.");
+                }
+            }
+        });
+
+        if (!resultsJson) throw new Error("AI failed: 'results.json' not found in ZIP.");
+        
+        return { 
+            success: true, 
+            results: resultsJson.results || resultsJson 
+        };
+    }
+
+    // ❌ SCENARIO D: Unknown Format
+    console.error("❌ Unexpected API Response:", JSON.stringify(predictData, null, 2));
+    throw new Error("AI Service Response format not recognized (Missing 'attendance', 'results', or 'results_zip')");
 
   } catch (error) {
     console.error("❌ Error in processFaceBatch:", error.message);
-    // Rethrow so the controller knows it failed
     throw error; 
   }
 };
