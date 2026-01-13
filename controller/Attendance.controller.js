@@ -138,7 +138,7 @@ export const markAttendanceWithFace = asyncHandler(async (req, res) => {
     success: true,
     lectureId: attendance._id,
     message: "Attendance marked successfully",
-    fileName: `Attendance_${attendance._id}.xlsx`, // Just a string for Frontend to use
+    fileName: `Attendance_${attendance._id}.pdf`, // Just a string for Frontend to use
     attendance: responseList
   });
 });
