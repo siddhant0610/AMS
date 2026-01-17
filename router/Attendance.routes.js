@@ -32,12 +32,15 @@ const upload = multer({
   storage,
   limits: { fileSize: 8 * 1024 * 1024 }, // 8MB max
   fileFilter: (req, file, cb) => {
-    const allowed = ["image/jpeg", "image/png", "image/jpg"];
-    if (!allowed.includes(file.mimetype)) {
-      return cb(new Error("Only JPG and PNG images are allowed"));
-    }
-    cb(null, true);
-  },
+  const ext = path.extname(file.originalname).toLowerCase();
+  const allowedExt = [".jpg", ".jpeg", ".png"];
+
+  if (!allowedExt.includes(ext)) {
+    return cb(new Error("Only JPG and PNG images are allowed"));
+  }
+
+  cb(null, true);
+},
 });
 
 // Ensure temp folder exists
