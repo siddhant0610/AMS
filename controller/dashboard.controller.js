@@ -17,6 +17,15 @@ const getISTDate = () => {
   ist.setHours(0, 0, 0, 0);
   return ist;
 };
+const formatTimeIST = (timeValue) => {
+  if (typeof timeValue === 'string' && timeValue.includes(':')) return timeValue;
+  return new Date(timeValue).toLocaleTimeString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  });
+};
 
 // Returns day name in IST (e.g., "Friday")
 const getISTDayName = () => {
@@ -153,21 +162,20 @@ export const getTeacherDashboard = asyncHandler(async (req, res) => {
    - Reads static timetable (Section)
    - No attendance mutation
 ============================================================ */
-
 export const getStudentDashboard = asyncHandler(async (req, res) => {
   const user = req.user;
   const todayName = getISTDayName();
+  
   const todayDate = getISTDate();
+  todayDate.setHours(0, 0, 0, 0); 
 
+  // 1. Find Student
   const student = await Student.findOne({ email: user.email });
   if (!student) {
-    return res.status(200).json({
-      success: true,
-      role: "student",
-      schedule: []
-    });
+    return res.status(200).json({ success: true, role: "student", schedule: [] });
   }
 
+  // 2. Find Sections
   const sections = await Section.find({
     "Student.Reg_No": student._id,
     "Day.Day": todayName
@@ -175,20 +183,62 @@ export const getStudentDashboard = asyncHandler(async (req, res) => {
     .populate("Course", "CourseName courseCode")
     .populate("Teacher", "name");
 
+  // 3. Fetch Attendance Sessions for Today
+  const sectionIds = sections.map(sec => sec._id);
+  const todaySessions = await Attendance.find({
+    date: todayDate,
+    section: { $in: sectionIds } 
+  });
+
   let schedule = [];
 
-  sections.forEach(sec => {
+  sections.forEach((sec) => {
     const todaySlots = sec.Day.filter(d => d.Day.includes(todayName));
 
     todaySlots.forEach(slot => {
+      
+      // ✅ THE FIX: Robust Time Comparison (IST vs IST)
+      const activeSession = todaySessions.find(s => {
+        // 1. Must match Section
+        if (s.section.toString() !== sec._id.toString()) return false;
+        
+        // 2. Must match Start Time (Convert DB UTC -> IST String)
+        const dbTimeStr = formatTimeIST(s.startTime); // e.g. "17:00"
+        
+        // Compare: Does "17:00" match "17:00"?
+        // We use .startsWith to handle cases like "17:00:00" vs "17:00"
+        return dbTimeStr.startsWith(slot.startTime);
+      });
+
+      let myStatus = "Pending"; 
+
+      if (activeSession) {
+          const myRecord = activeSession.students.find(s => 
+              s.student.toString() === student._id.toString()
+          );
+          
+          if (myRecord) {
+              // Ensure consistent capitalization (present -> Present)
+              myStatus = myRecord.status.charAt(0).toUpperCase() + myRecord.status.slice(1);
+          }
+          
+          // Logic: If class is locked (Teacher finished) AND I'm still "Pending", I am Absent.
+          if (activeSession.isLocked && myStatus === "Pending") {
+             myStatus = "Absent";
+          }
+      }
+
+      const startStr = formatTimeIST(slot.startTime); 
+      const endStr = formatTimeIST(slot.endTime);
+
       schedule.push({
-        section_id: sec._id,
+        id: sec._id,
         subject: sec.Course?.CourseName || "Unknown Course",
         courseCode: sec.Course?.courseCode || "",
         teacher: sec.Teacher?.name || "TBD",
-        time: `${slot.startTime} - ${slot.endTime}`,
+        time: `${startStr} - ${endStr}`,
         room: sec.RoomNo,
-        status: "Pending"
+        status: myStatus 
       });
     });
   });
@@ -199,7 +249,7 @@ export const getStudentDashboard = asyncHandler(async (req, res) => {
     success: true,
     role: "student",
     studentName: student.name,
-    date: todayDate.toDateString(),
+    date: getISTDate().toDateString(),
     day: todayName,
     count: schedule.length,
     schedule

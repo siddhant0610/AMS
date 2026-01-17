@@ -126,7 +126,7 @@ export const markAttendanceWithFace = asyncHandler(async (req, res) => {
       status: isPresent ? "Present" : "Absent"
     });
   });
-
+attendance.totalPresent = presentCount;
   // 4. Save
   attendance.isLocked = true;
   await attendance.save();
