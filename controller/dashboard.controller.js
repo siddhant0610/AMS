@@ -164,76 +164,78 @@ export const getTeacherDashboard = asyncHandler(async (req, res) => {
 ============================================================ */
 export const getStudentDashboard = asyncHandler(async (req, res) => {
   const user = req.user;
-  const todayName = getISTDayName();
   
-  const todayDate = getISTDate();
-  todayDate.setHours(0, 0, 0, 0); 
-
-  // 1. Find Student
-  const student = await Student.findOne({ email: user.email });
-  if (!student) {
-    return res.status(200).json({ success: true, role: "student", schedule: [] });
+  // 1. DETERMINE DATE (Query Param or Default to Today)
+  let targetDate;
+  if (req.query.date) {
+     targetDate = new Date(req.query.date); // e.g., "2026-01-15"
+  } else {
+     targetDate = getISTDate();
   }
+  
+  // Normalize to Midnight for DB matching
+  targetDate.setHours(0, 0, 0, 0); 
 
-  // 2. Find Sections
+  // 2. Get Day Name (e.g., "Monday") from the TARGET DATE
+  const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const targetDayName = days[targetDate.getDay()];
+
+  // 3. Find Student
+  const student = await Student.findOne({ email: user.email });
+  if (!student) return res.status(200).json({ success: true, schedule: [] });
+
+  // 4. Find Sections (Based on the Day of the Requested Date)
   const sections = await Section.find({
     "Student.Reg_No": student._id,
-    "Day.Day": todayName
+    "Day.Day": targetDayName // 👈 Check if they had class on THAT day
   })
-    .populate("Course", "CourseName courseCode")
-    .populate("Teacher", "name");
+  .populate("Course", "CourseName courseCode")
+  .populate("Teacher", "name");
 
-  // 3. Fetch Attendance Sessions for Today
+  // 5. Fetch Attendance Sessions for TARGET DATE
   const sectionIds = sections.map(sec => sec._id);
-  const todaySessions = await Attendance.find({
-    date: todayDate,
+  const existingSessions = await Attendance.find({
+    date: targetDate, // 👈 Look for records on THAT date
     section: { $in: sectionIds } 
   });
 
   let schedule = [];
 
   sections.forEach((sec) => {
-    const todaySlots = sec.Day.filter(d => d.Day.includes(todayName));
+    // Filter slots for the specific day
+    const daySlots = sec.Day.filter(d => d.Day.includes(targetDayName));
 
-    todaySlots.forEach(slot => {
-      
-      // ✅ THE FIX: Robust Time Comparison (IST vs IST)
-      const activeSession = todaySessions.find(s => {
-        // 1. Must match Section
-        if (s.section.toString() !== sec._id.toString()) return false;
-        
-        // 2. Must match Start Time (Convert DB UTC -> IST String)
-        const dbTimeStr = formatTimeIST(s.startTime); // e.g. "17:00"
-        
-        // Compare: Does "17:00" match "17:00"?
-        // We use .startsWith to handle cases like "17:00:00" vs "17:00"
-        return dbTimeStr.startsWith(slot.startTime);
-      });
+    daySlots.forEach(slot => {
+      // Check for session match
+      const activeSession = existingSessions.find(s => 
+        s.section.toString() === sec._id.toString() && 
+        // Compare Hours (Simple integer match)
+        new Date(s.startTime).getHours() === parseInt(slot.startTime.split(':')[0])
+      );
 
       let myStatus = "Pending"; 
+      
+      // If viewing a PAST date and no session exists, it means the class didn't happen
+      if (!activeSession && targetDate < getISTDate().setHours(0,0,0,0)) {
+           myStatus = "No Record"; 
+      }
 
       if (activeSession) {
           const myRecord = activeSession.students.find(s => 
               s.student.toString() === student._id.toString()
           );
-          
           if (myRecord) {
-              // Ensure consistent capitalization (present -> Present)
               myStatus = myRecord.status.charAt(0).toUpperCase() + myRecord.status.slice(1);
-          }
-          
-          // Logic: If class is locked (Teacher finished) AND I'm still "Pending", I am Absent.
-          if (activeSession.isLocked && myStatus === "Pending") {
-             myStatus = "Absent";
           }
       }
 
+      // Format Times
       const startStr = formatTimeIST(slot.startTime); 
       const endStr = formatTimeIST(slot.endTime);
 
       schedule.push({
         id: sec._id,
-        subject: sec.Course?.CourseName || "Unknown Course",
+        subject: sec.Course?.CourseName || "Unknown",
         courseCode: sec.Course?.courseCode || "",
         teacher: sec.Teacher?.name || "TBD",
         time: `${startStr} - ${endStr}`,
@@ -249,8 +251,8 @@ export const getStudentDashboard = asyncHandler(async (req, res) => {
     success: true,
     role: "student",
     studentName: student.name,
-    date: getISTDate().toDateString(),
-    day: todayName,
+    date: targetDate.toDateString(),
+    day: targetDayName,
     count: schedule.length,
     schedule
   });
