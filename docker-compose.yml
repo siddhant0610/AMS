@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  # Service 1: Your Node.js Backend
+  api:
+    build: .
+    container_name: ams_backend
+    ports:
+      - "5000:5000" # Map host port 5000 to container port 5000
+    env_file:        # 👈 Docker will read your .env file automatically
+      - .env
+    environment:
+      - PORT=5000
+      # ⚠️ IMPORTANT: If using the local mongo container below, use this URL:
+      # - MONGODB_URI=mongodb://mongo_db:27017/ams_database
+      # If using MongoDB Atlas, uncomment the next line and add your real URL:
+      - MONGODB_URI=mongodb+srv://Siddhant_AMS:Siddhant@cluster0.apsapxl.mongodb.net
+      - CORS_ORIGIN=*
+      - ACCESS_TOKEN_SECRET=your_secret_key
+      - ACCESS_TOKEN_EXPIRY=1d
+    depends_on:
+      - mongo_db
+    restart: always
+
+  # Service 2: Local MongoDB (Optional - remove if using Atlas)
+  mongo_db:
+    image: mongo:latest
+    container_name: ams_mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db # Persist data so it doesn't vanish on restart
+
+volumes:
+  mongo_data:
