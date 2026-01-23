@@ -136,9 +136,9 @@ attendance.totalPresent = presentCount;
   // =========================================================
   res.status(200).json({
     success: true,
-    lectureId: attendance._id,
+    lectureId: attendance.customId,
     message: "Attendance marked successfully",
-    fileName: `Attendance_${attendance._id}.pdf`, // Just a string for Frontend to use
+    fileName: `Attendance_${attendance.customId}.pdf`, // Just a string for Frontend to use
     attendance: responseList
   });
 });
