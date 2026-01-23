@@ -41,7 +41,10 @@ const AttendanceSchema = new mongoose.Schema({
         type: String,
         required: true
     },
-    
+    customId: {
+    type: String,
+    unique: true // Optional: Ensures you don't have duplicate IDs for the same class
+  },
     // Day of week
     day: {
         type: String,
@@ -129,15 +132,55 @@ AttendanceSchema.index({ section: 1, date: 1, startTime: 1 }, { unique: true });
 AttendanceSchema.index({ 'students.student': 1, date: 1 });
 
 // Calculate totals before saving
-AttendanceSchema.pre('save', function(next) {
-    if (this.students && this.students.length > 0) {
-        this.totalPresent = this.students.filter(s => s.status === 'present').length;
-        this.totalAbsent = this.students.filter(s => s.status === 'absent').length;
-        this.totalNotConsidered = this.students.filter(s => s.status === 'not-considered').length;
-        const total = this.students.length;
-        this.attendancePercentage = total > 0 ? Math.round((this.totalPresent / total) * 100) : 0;
+AttendanceSchema.pre("save", async function (next) {
+  
+  // ---------------------------------------------------------
+  // 1️⃣ PART 1: Calculate Statistics (Synchronous)
+  // ---------------------------------------------------------
+  if (this.students && this.students.length > 0) {
+    this.totalPresent = this.students.filter(s => s.status === 'present').length;
+    this.totalAbsent = this.students.filter(s => s.status === 'absent').length;
+    this.totalNotConsidered = this.students.filter(s => s.status === 'not-considered').length;
+    
+    const total = this.students.length;
+    // Prevent division by zero
+    this.attendancePercentage = total > 0 
+      ? Math.round((this.totalPresent / total) * 100) 
+      : 0;
+  }
+
+  // ---------------------------------------------------------
+  // 2️⃣ PART 2: Generate Custom ID (Asynchronous)
+  // Only runs if customId is missing
+  // ---------------------------------------------------------
+  if (!this.customId) {
+    try {
+      // ⚠️ SAFE FETCHING: Use mongoose.model() to avoid circular dependency crashes
+      const CourseModel = mongoose.model("Course");
+      const SectionModel = mongoose.model("Section");
+
+      const courseDoc = await CourseModel.findById(this.course).select("courseCode");
+      const sectionDoc = await SectionModel.findById(this.section).select("SectionName");
+
+      // Format Date: Use India Locale to ensure the date matches the 'Day'
+      // (toISOString gives UTC, which might show the previous date if early morning)
+      const dateStr = this.date.toLocaleDateString("en-CA", { // en-CA gives YYYY-MM-DD
+         timeZone: "Asia/Kolkata" 
+      });
+
+      const cCode = courseDoc ? courseDoc.courseCode : "UNK";
+      const sName = sectionDoc ? sectionDoc.SectionName : "UNK";
+
+      // Format: Monday:2026-01-24:CS101:SecA
+      this.customId = `${this.day}:${dateStr}:${cCode}:${sName}`;
+      
+    } catch (error) {
+      console.error("⚠️ Error generating customId:", error);
+      // We continue without customId rather than crashing the whole save
     }
-    next();
+  }
+
+  next();
 });
 
 export const Attendance = mongoose.model('Attendance', AttendanceSchema);
