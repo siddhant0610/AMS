@@ -262,7 +262,71 @@ export const createAdHocSession = asyncHandler(async (req, res) => {
   });
 });
 
+/* ============================================================
+   🔄 ADD PERMANENT SLOT (Repeat Option)
+   Action: Updates the 'Section' document permanently.
+   Body: { "sectionId": "...", "day": "Monday", "startTime": "10:00", "endTime": "11:00" }
+============================================================ */
+export const addPermanentSlot = asyncHandler(async (req, res) => {
+  const user = req.user;
+  const { sectionId, day, startTime, endTime } = req.body;
 
+  // 1. Validate Teacher
+  const teacher = await Teacher.findOne({ email: user.email });
+  if (!teacher) throw new ApiError(403, "Teacher not found");
+
+  // 2. Find Section
+  const section = await Section.findById(sectionId);
+  if (!section) throw new ApiError(404, "Section not found");
+
+  // Optional: Security Check
+  // Only allow the owner of the section (or Admin) to modify the permanent timetable
+  if (section.Teacher.toString() !== teacher._id.toString()) {
+      return res.status(403).json({ 
+          success: false, 
+          message: "You can only edit the permanent timetable for your own sections." 
+      });
+  }
+
+  // ============================================================
+  // 🛡️ CONFLICT CHECK (Permanent Timetable)
+  // We check if the 'Day' array inside this Section already has a slot
+  // that overlaps with the new time on the same day.
+  // ============================================================
+  
+  // Logic: (ExistingStart < NewEnd) AND (ExistingEnd > NewStart)
+  const isClash = section.Day.some(slot => {
+      if (slot.Day !== day) return false; // Different day? No clash.
+      return (slot.startTime < endTime && slot.endTime > startTime);
+  });
+
+  if (isClash) {
+      return res.status(409).json({
+          success: false,
+          message: `Conflict! This section already has a class on ${day} during this time.`
+      });
+  }
+
+  // ============================================================
+  // ✅ UPDATE TIMETABLE
+  // ============================================================
+  section.Day.push({
+      Day: day,        // e.g. "Monday"
+      startTime: startTime,
+      endTime: endTime
+  });
+
+  await section.save();
+
+  res.status(200).json({
+      success: true,
+      message: `Permanently added class to ${section.SectionName} for every ${day}.`,
+      data: {
+          day,
+          time: `${startTime} - ${endTime}`
+      }
+  });
+});
 /* ==========================================================================
    4️⃣ GET MY ATTENDANCE STATS
 ========================================================================== */
