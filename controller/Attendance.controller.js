@@ -5,14 +5,14 @@ import { asyncHandler } from "../asyncHandler.js";
 import { ApiError } from "../utils/api.Error.js";
 
 // Models
-import { Attendance } from "../modules/Attendance.js"; 
-import { Section } from "../modules/Section.js";       
+import { Attendance } from "../modules/Attendance.js";
+import { Section } from "../modules/Section.js";
 import { Teacher } from "../modules/Teacher.js";
 import { Student } from "../modules/Student.js";
 // ❌ Submission Import Removed
 
 // Services
-import { processFaceBatch } from "../Services/faceRecognition.js"; 
+import { processFaceBatch } from "../Services/faceRecognition.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -35,7 +35,7 @@ export const checkAttendanceStatus = asyncHandler(async (req, res) => {
   const { attendanceId } = req.params;
 
   const attendance = await Attendance.findById(attendanceId).select("isLocked");
-  
+
   if (!attendance) throw new ApiError(404, "Session not found");
 
   res.status(200).json({
@@ -62,12 +62,12 @@ export const markAttendanceWithFace = asyncHandler(async (req, res) => {
 
   // 2. Fetch Session
   const attendance = await Attendance.findById(attendanceId)
-    .populate("students.student", "name regNo") 
+    .populate("students.student", "name regNo")
     .populate("section");
 
   if (!attendance) {
-     files.forEach((f) => safeDelete(f.path));
-     throw new ApiError(404, "Session not found");
+    files.forEach((f) => safeDelete(f.path));
+    throw new ApiError(404, "Session not found");
   }
 
   // 3. AI Processing
@@ -92,7 +92,7 @@ export const markAttendanceWithFace = asyncHandler(async (req, res) => {
   // =========================================================
 
   const detectedList = batchResult.results || [];
-  
+
   // A. Create Normalized Set
   const presentNamesSet = new Set();
   detectedList.forEach(item => {
@@ -114,7 +114,7 @@ export const markAttendanceWithFace = asyncHandler(async (req, res) => {
     if (isPresent) {
       record.status = "present";
       record.faceRecognition = { verified: true, confidence: 99 };
-      record.markedAt = new Date(); 
+      record.markedAt = new Date();
       presentCount++;
     } else {
       record.status = "absent";
@@ -123,10 +123,11 @@ export const markAttendanceWithFace = asyncHandler(async (req, res) => {
     // Build the JSON Array Response
     responseList.push({
       regNo: record.student.regNo,
+      name: record.student.name,
       status: isPresent ? "Present" : "Absent"
     });
   });
-attendance.totalPresent = presentCount;
+  attendance.totalPresent = presentCount;
   // 4. Save
   attendance.isLocked = true;
   await attendance.save();
@@ -142,6 +143,7 @@ attendance.totalPresent = presentCount;
     attendance: responseList
   });
 });
+
 
 /* ==========================================================================
    3️⃣ GET SESSION DETAILS
@@ -167,10 +169,10 @@ export const getSessionDetails = asyncHandler(async (req, res) => {
     );
 
     if (!myRecord) throw new ApiError(403, "You are not enrolled in this session.");
-    
+
     const now = new Date();
     // Assuming startTime is a Date object (Loosely Coupled)
-    const classStart = new Date(session.startTime); 
+    const classStart = new Date(session.startTime);
 
     let displayStatus = myRecord.status;
     if (now < classStart) displayStatus = "Not Started";
@@ -185,7 +187,7 @@ export const getSessionDetails = asyncHandler(async (req, res) => {
         teacher: session.markedBy?.name || "Unknown Teacher",
         date: session.date,
         day: session.day,
-        time: `${new Date(session.startTime).toLocaleTimeString("en-IN", {hour:"2-digit", minute:"2-digit", timeZone:"Asia/Kolkata"})} - ${new Date(session.endTime).toLocaleTimeString("en-IN", {hour:"2-digit", minute:"2-digit", timeZone:"Asia/Kolkata"})}`,
+        time: `${new Date(session.startTime).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" })} - ${new Date(session.endTime).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" })}`,
         room: session.roomNo,
         isCompleted: session.isLocked,
         myStatus: displayStatus,
@@ -197,9 +199,69 @@ export const getSessionDetails = asyncHandler(async (req, res) => {
 
   res.status(200).json({
     success: true,
-    data: session 
+    data: session
   });
 });
+export const createAdHocSession = asyncHandler(async (req, res) => {
+  const user = req.user;
+  const { sectionId, date, startTime, endTime } = req.body;
+
+  // 1. Verify Teacher & Section
+  const teacher = await Teacher.findOne({ email: user.email });
+  const section = await Section.findById(sectionId).populate("Student.Reg_No");
+  if (!section) throw new ApiError(404, "Section not found");
+
+  // 2. Prepare Date (Defaults to Today if empty)
+  const targetDate = date ? new Date(date) : getISTDate();
+  targetDate.setHours(0, 0, 0, 0);
+  
+  // We just get the full name "Saturday", let the Schema shorten it to "Sat"
+  const dayName = targetDate.toLocaleDateString("en-US", { weekday: 'long', timeZone: "Asia/Kolkata" });
+
+  // 3. Conflict Check
+  const clash = await Attendance.findOne({
+    section: sectionId,
+    date: targetDate,
+    $or: [
+      { startTime: { $lt: endTime }, endTime: { $gt: startTime } }
+    ]
+  });
+
+  if (clash) {
+    return res.status(409).json({
+      success: false,
+      message: `Clash! Section busy from ${clash.startTime} to ${clash.endTime}.`
+    });
+  }
+
+  // 4. Create Session (Schema will handle the ID formatting)
+  const newSession = await Attendance.create({
+      section: sectionId,
+      course: section.Course,
+      markedBy: teacher._id,
+      
+      date: targetDate,
+      day: dayName, 
+      startTime,
+      endTime,
+      roomNo: section.RoomNo,
+      
+      students: section.Student.map(s => s.Reg_No ? ({ 
+          student: s.Reg_No._id, status: "absent" 
+      }) : null).filter(Boolean),
+      
+      isLocked: false,
+      isExtraClass: true
+  });
+
+  // 5. Success (No Redirect, just confirmation)
+  res.status(200).json({
+      success: true,
+      message: "Extra class created successfully",
+      sessionId: newSession._id
+  });
+});
+
 
 /* ==========================================================================
    4️⃣ GET MY ATTENDANCE STATS
@@ -212,7 +274,7 @@ export const getMyAttendance = asyncHandler(async (req, res) => {
 
   const allRecords = await Attendance.find({
     "students.student": studentProfile._id,
-    isLocked: true 
+    isLocked: true
   }).populate("course", "CourseName courseCode credits").lean();
 
   const courseStats = {};
