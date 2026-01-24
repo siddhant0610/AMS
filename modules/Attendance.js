@@ -164,15 +164,16 @@ AttendanceSchema.pre("save", async function (next) {
 
       // Format Date: Use India Locale to ensure the date matches the 'Day'
       // (toISOString gives UTC, which might show the previous date if early morning)
-      const dateStr = this.date.toLocaleDateString("en-CA", { // en-CA gives YYYY-MM-DD
-         timeZone: "Asia/Kolkata" 
-      });
+    const datePart = this.date.toLocaleDateString("en-GB", {
+         day: '2-digit', month: '2-digit', year: '2-digit',
+         timeZone: "Asia/Kolkata"
+      }).replace(/\//g, '-');
 
       const cCode = courseDoc ? courseDoc.courseCode : "UNK";
       const sName = sectionDoc ? sectionDoc.SectionName : "UNK";
 
       // Format: Monday:2026-01-24:CS101:SecA
-      this.customId = `${this.day}:${dateStr}:${cCode}:${sName}`;
+      this.customId = `${this.day.slice(0,3)}:${datePart}-${cCode}-${sName}`;
       
     } catch (error) {
       console.error("⚠️ Error generating customId:", error);
