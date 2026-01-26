@@ -92,22 +92,54 @@ export const GetAllSections = asyncHandler(async (req, res) => {
 });
 
 export const getSections = asyncHandler(async (req, res) => {
-  // Frontend sends: /api/v1/sections?courseId=12345
-  const { courseCode} = req.query;
-
-  const filter = {};
-  if (courseCode) {
-     // Ensure your Section model uses 'Course' (capital C) or 'course' check your schema!
-     filter.Course = courseCode; 
+  // 1. Get the Names from the URL Query
+  const { courseName, branch } = req.query;
+  
+  // Validate input
+  if (!courseName) {
+      return res.status(400).json({ success: false, message: "courseName is required" });
   }
 
-  // Populate 'Teacher' so you can show who usually takes this section
-  const sections = await Section.find(filter).populate("Teacher", "name email");
+  // ---------------------------------------------------------
+  // STEP 1: Find the Course ID using the Name & Branch
+  // ---------------------------------------------------------
+  const courseFilter = { 
+      // Make it case-insensitive so "java" finds "Java"
+      CourseName: { $regex: new RegExp(courseName, "i") } 
+  };
+  
+  if (branch) {
+      courseFilter.branch = branch;
+  }
 
+  const targetCourse = await Course.findOne(courseFilter);
+
+  // If no course matches that name, return empty immediately
+  if (!targetCourse) {
+      return res.status(404).json({ 
+          success: false, 
+          message: "Course not found",
+          data: [] 
+      });
+  }
+
+  // ---------------------------------------------------------
+  // STEP 2: Find Sections using the Found Course ID
+  // ---------------------------------------------------------
+  const sections = await Section.find({ Course: targetCourse._id })
+      .populate("Teacher", "name email");
+
+  // ---------------------------------------------------------
+  // STEP 3: Return Result
+  // ---------------------------------------------------------
   res.status(200).json({
     success: true,
     count: sections.length,
-    data: sections
+    data: sections.map(sec => ({
+
+        sectionName: sec.SectionName,
+        courseName: targetCourse.CourseName 
+    }))
   });
 });
 /* ==========================================================
@@ -175,15 +207,15 @@ export const AddScheduleToSection = asyncHandler(async (req, res) => {
   // We use $push with $each to append multiple new days at once
   const updatedSection = await Section.findByIdAndUpdate(
     id,
-    { 
-      $push: { 
-        Day: { $each: Day } 
-      } 
+    {
+      $push: {
+        Day: { $each: Day }
+      }
     },
     { new: true, runValidators: true }
   )
-  .populate("Course", "CourseName courseCode")
-  .populate("Teacher", "name");
+    .populate("Course", "CourseName courseCode")
+    .populate("Teacher", "name");
 
   if (!updatedSection) {
     return res.status(404).json({ success: false, message: "Section not found" });
@@ -222,7 +254,7 @@ export const DeleteSection = asyncHandler(async (req, res) => {
 ========================================================== */
 export const AddStudentToSection = asyncHandler(async (req, res) => {
   const { SectionName } = req.params;     // Section ID
-  const { regNo} = req.body; // Student's _id (or regNo, depending on your frontend)
+  const { regNo } = req.body; // Student's _id (or regNo, depending on your frontend)
 
   // 1. Fetch Section & Student (Validation)
   const section = await Section.findOne({ SectionName }).populate("Course");
@@ -240,7 +272,7 @@ export const AddStudentToSection = asyncHandler(async (req, res) => {
 
   // 3. UPDATE: Add to Section Roster ONLY
   // This is the "Single Source of Truth". We do NOT touch the Student document.
-  section.Student.push({ Reg_No: student._id});
+  section.Student.push({ Reg_No: student._id });
   if (!section.Building) {
     section.Building = "Main Block"; // Or any default value
   }
