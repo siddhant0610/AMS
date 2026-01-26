@@ -19,7 +19,7 @@ const CourseSchema = new mongoose.Schema(
       required: true,
       trim: true
     },
-    department: {
+    branch: {
       type: String,
       required: true,
       trim: true,
@@ -38,7 +38,7 @@ const CourseSchema = new mongoose.Schema(
       min: 1,
       max: 6
     },
-    semester: {
+    year: {
       type: Number,
       required: true,
       min: 1,
