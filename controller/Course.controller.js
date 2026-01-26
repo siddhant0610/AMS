@@ -19,17 +19,17 @@ const CreateCourse = asyncHandler(async (req, res) => {
     req.body.CourseCode?.trim().toUpperCase();
   const CourseName =
     req.body.CourseName?.trim() || req.body.courseName?.trim();
-  const department = req.body.department?.trim();
+  const branch = req.body.branch?.trim();
   const credits = req.body.credits;
-  const semester = req.body.semester;
+  const year = req.body.year;
   const description = req.body.description || "";
   const teachers = req.body.teachers || []; // ✅ supports multiple teachers now
 
-  if (!courseCode || !CourseName || !department || !credits || !semester) {
+  if (!courseCode || !CourseName || !branch || !credits || !year) {
     return res.status(400).json({
       success: false,
       message:
-        "Missing required fields. Please provide: courseCode, CourseName, department, credits, semester",
+        "Missing required fields. Please provide: courseCode, CourseName, branch, credits, year",
     });
   }
 
@@ -44,9 +44,9 @@ const CreateCourse = asyncHandler(async (req, res) => {
   const created = await Course.create({
     courseCode,
     CourseName,
-    department,
+    branch,
     credits,
-    semester,
+    year,
     description,
     teachers,
   });
@@ -69,7 +69,7 @@ const GetAllCourses = asyncHandler(async (req, res) => {
   const { page = 1, limit = 10, department, semester, isActive } = req.query;
 
   const filter = {};
-  if (department) filter.department = department;
+  if (branch) filter.branch = branch;
   if (semester) filter.semester = parseInt(semester);
   if (isActive !== undefined) filter.isActive = isActive === "true";
 

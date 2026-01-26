@@ -24,9 +24,9 @@ const CourseSchema = new mongoose.Schema(
       required: true,
       trim: true,
       enum: [
-        "Computer Science",
-        "Mechanical",
-        "Electrical",
+        "CSE",
+        "AIML",
+        "DS",
         "Civil",
         "IT",
         "Electronics"
