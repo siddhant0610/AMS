@@ -134,11 +134,8 @@ export const getSections = asyncHandler(async (req, res) => {
   // ---------------------------------------------------------
   res.status(200).json({
     success: true,
-    count: sections.length,
     data: sections.map(sec => ({
-
         sectionName: sec.SectionName,
-        courseName: targetCourse.CourseName 
     }))
   });
 });
