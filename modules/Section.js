@@ -17,11 +17,11 @@ const SectionSchema = new mongoose.Schema(
       required: true
     },
 
-    Teacher: {
+    Teacher:[ {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Teacher",
       required: true
-    },
+    }],
 
     Student: [
       {
@@ -38,7 +38,6 @@ const SectionSchema = new mongoose.Schema(
     ],
 
     RoomNo: { type: String, required: true },
-    Building: { type: String, required: true },
 
     Day: [
       {

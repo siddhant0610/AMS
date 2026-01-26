@@ -2,22 +2,21 @@ import express from 'express';
 import {
     CreateSection,
     GetAllSections,
-    GetSection,
-    UpdateSection,
+     UpdateSection,
+     getSections,
     DeleteSection,
     AddStudentToSection,
     RemoveStudentFromSection,
-    MarkAttendance,
-    MarkSectionCompleted,
     AddScheduleToSection
 } from '../controller/SectionContoller.js';
 
+import { verifyJWT } from '../MiddleWares/authentication.js';
 const router = express.Router();
 
 // Basic CRUD
 router.post('/', CreateSection);
-router.get('/', GetAllSections);
-router.get('/:id', GetSection);
+router.get('/allSections', GetAllSections);
+router.get('/sections',verifyJWT, getSections);
 router.put('/:id', UpdateSection);
 router.delete('/:id', DeleteSection);
 router.put('/:id/schedule', AddScheduleToSection);
@@ -25,11 +24,4 @@ router.put('/:id/schedule', AddScheduleToSection);
 // Student management
 router.post('/:SectionName/add', AddStudentToSection);
 router.delete('/:id/students/:studentId', RemoveStudentFromSection);
-
-// Attendance
-router.patch('/:id/attendance/:studentId', MarkAttendance);
-
-// Mark completed
-router.patch('/:id/complete', MarkSectionCompleted);
-
 export default router;

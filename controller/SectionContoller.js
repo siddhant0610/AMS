@@ -91,21 +91,25 @@ export const GetAllSections = asyncHandler(async (req, res) => {
   });
 });
 
-/* ==========================================================
-   ✅ GET SECTION BY ID
-========================================================== */
-export const GetSection = asyncHandler(async (req, res) => {
-  const section = await Section.findById(req.params.id)
-    .populate("Student.Reg_No", "name regNo email department Semester")
-    .populate("Course", "CourseName courseCode credits")
-    .populate("Teacher", "name email department");
+export const getSections = asyncHandler(async (req, res) => {
+  // Frontend sends: /api/v1/sections?courseId=12345
+  const { courseCode} = req.query;
 
-  if (!section)
-    return res.status(404).json({ success: false, message: "Section not found" });
+  const filter = {};
+  if (courseCode) {
+     // Ensure your Section model uses 'Course' (capital C) or 'course' check your schema!
+     filter.Course = courseCode; 
+  }
 
-  res.status(200).json({ success: true, data: section });
+  // Populate 'Teacher' so you can show who usually takes this section
+  const sections = await Section.find(filter).populate("Teacher", "name email");
+
+  res.status(200).json({
+    success: true,
+    count: sections.length,
+    data: sections
+  });
 });
-
 /* ==========================================================
    ✅ UPDATE SECTION
 ========================================================== */
@@ -284,49 +288,3 @@ export const RemoveStudentFromSection = asyncHandler(async (req, res) => {
   });
 });
 
-/* ==========================================================
-   ✅ MARK ATTENDANCE
-========================================================== */
-export const MarkAttendance = asyncHandler(async (req, res) => {
-  const { id, studentId } = req.params;
-  const { attendance } = req.body;
-
-  const section = await Section.findById(id);
-  if (!section)
-    return res.status(404).json({ success: false, message: "Section not found" });
-
-  const student = section.Student.find((s) => s.Reg_No.toString() === studentId);
-  if (!student)
-    return res.status(404).json({ success: false, message: "Student not in section" });
-
-  student.attendance = attendance;
-  await section.save();
-
-  res.status(200).json({
-    success: true,
-    message: "Attendance updated successfully",
-  });
-});
-
-/* ==========================================================
-   ✅ MARK SECTION COMPLETED
-========================================================== */
-export const MarkSectionCompleted = asyncHandler(async (req, res) => {
-  const { id, scheduleIndex } = req.params;
-
-  const section = await Section.findById(id);
-  if (!section)
-    return res.status(404).json({ success: false, message: "Section not found" });
-
-  if (!section.Day[scheduleIndex])
-    return res.status(400).json({ success: false, message: "Invalid schedule index" });
-
-  section.Day[scheduleIndex].completed = "C";
-  await section.save();
-
-  res.status(200).json({
-    success: true,
-    message: "Schedule marked as completed",
-    data: section,
-  });
-});
