@@ -100,51 +100,26 @@ const GetAllCourses = asyncHandler(async (req, res) => {
   });
 });
 
-/* ========================================================
-   ✅ GET COURSE BY ID
-======================================================== */
-const GetCourse = asyncHandler(async (req, res) => {
-  const { id } = req.params;
+const getCourses = asyncHandler(async (req, res) => {
+  // 1. Extract filters from the URL Query String
+  const { year, branch } = req.query;
 
-  const course = await Course.findById(id)
-    .populate({
-      path: "sections",
-      populate: [
-        { path: "Student.Reg_No", select: "name regNo email" },
-        { path: "Teacher", select: "name email" },
-      ],
-    })
-    .populate("teachers", "name email department");
+  // 2. Build a filter object
+  // If year/branch exists, add it to the filter. If not, it stays empty (find all).
+  const filter = {};
+  if (year) filter.year = year;     // Make sure your DB field is 'year' (lowercase/uppercase?)
+  if (branch) filter.branch = branch;
 
-  if (!course)
-    return res.status(404).json({ success: false, message: "Course not found" });
+  // 3. Pass the filter to .find()
+  const courses = await Course.find(filter);
 
-  return res.status(200).json({ success: true, data: course });
+  res.status(200).json({
+    success: true,
+    count: courses.length,
+    data: courses
+  });
 });
 
-/* ========================================================
-   ✅ GET COURSE BY CODE
-======================================================== */
-const GetCourseByCode = asyncHandler(async (req, res) => {
-  const { courseCode } = req.params;
-
-  const course = await Course.findOne({
-    courseCode: courseCode.toUpperCase(),
-  })
-    .populate({
-      path: "sections",
-      populate: [
-        { path: "Student.Reg_No", select: "name regNo email" },
-        { path: "Teacher", select: "name email" },
-      ],
-    })
-    .populate("teachers", "name email department");
-
-  if (!course)
-    return res.status(404).json({ success: false, message: "Course not found" });
-
-  return res.status(200).json({ success: true, data: course });
-});
 
 /* ========================================================
    ✅ UPDATE COURSE
@@ -289,40 +264,6 @@ const GetCourseStudents = asyncHandler(async (req, res) => {
   });
 });
 
-/* ========================================================
-   ✅ COURSE STATS
-======================================================== */
-const GetCourseStats = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  const course = await Course.findById(id).populate({
-    path: "sections",
-    populate: { path: "Student.Reg_No Teacher" },
-  });
-
-  if (!course)
-    return res.status(404).json({ success: false, message: "Course not found" });
-
-  const stats = {
-    courseCode: course.courseCode,
-    courseName: course.CourseName,
-    totalSections: course.sections.length,
-    totalStudents: 0,
-    sectionWiseStudents: [],
-  };
-
-  course.sections.forEach((section) => {
-    const studentCount = section.Student.length;
-    stats.totalStudents += studentCount;
-    stats.sectionWiseStudents.push({
-      sectionName: section.SectionName,
-      teacher: section.Teacher ? section.Teacher.name : "Not assigned",
-      studentCount,
-      roomNo: section.RoomNo,
-    });
-  });
-
-  return res.status(200).json({ success: true, data: stats });
-});
 
 /* ========================================================
    ✅ EXPORT
@@ -330,11 +271,9 @@ const GetCourseStats = asyncHandler(async (req, res) => {
 export {
   CreateCourse,
   GetAllCourses,
-  GetCourse,
-  GetCourseByCode,
+  getCourses,
   UpdateCourse,
   DeleteCourse,
   AddSectionToCourse,
-  GetCourseStudents,
-  GetCourseStats,
+  GetCourseStudents
 };

@@ -2,22 +2,20 @@ import express from 'express';
 import {
     CreateCourse,
     GetAllCourses,
-    GetCourse,
-    GetCourseByCode,
+    getCourses,
     UpdateCourse,
     DeleteCourse,
     AddSectionToCourse,
-    GetCourseStudents,
-    GetCourseStats
+    GetCourseStudents
 } from '../controller/Course.controller.js';
+import { verifyJWT } from '../MiddleWares/authentication.js';
 
 const Courserouter = express.Router();
 
 // Basic CRUD
 Courserouter.post('/', CreateCourse);
-Courserouter.get('/', GetAllCourses);
-Courserouter.get('/courses/:id', GetCourse);
-Courserouter.get('/courses/code/:courseCode', GetCourseByCode);
+Courserouter.get('/allCourses', GetAllCourses);
+Courserouter.get('/courses', verifyJWT, getCourses);
 Courserouter.put('/courses/:id', UpdateCourse);
 Courserouter.delete('/courses/:id', DeleteCourse);
 
@@ -28,6 +26,6 @@ Courserouter.post('/courses/:id/sections', AddSectionToCourse);
 Courserouter.get('/courses/:id/students', GetCourseStudents);
 
 // Statistics
-Courserouter.get('/courses/:id/stats', GetCourseStats);
+
 
 export default Courserouter;
