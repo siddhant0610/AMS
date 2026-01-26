@@ -112,168 +112,170 @@ const getCourses = asyncHandler(async (req, res) => {
 
   // 3. Pass the filter to .find()
   const courses = await Course.find(filter);
-
-  res.status(200).json({
+  return res.status(200).json({
     success: true,
-    count: courses.length,
-    data: courses
+    
+    // We loop through the list and reformat each item
+    courses: courses.map(course => ({
+      name: course.CourseName // Map 'CourseName' to 'name'
+    }))
   });
 });
 
 
-/* ========================================================
-   ✅ UPDATE COURSE
-======================================================== */
-const UpdateCourse = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  const course = await Course.findById(id);
-  if (!course)
-    return res.status(404).json({ success: false, message: "Course not found" });
+  /* ========================================================
+     ✅ UPDATE COURSE
+  ======================================================== */
+  const UpdateCourse = asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const course = await Course.findById(id);
+    if (!course)
+      return res.status(404).json({ success: false, message: "Course not found" });
 
-  if (req.body.courseCode && req.body.courseCode !== course.courseCode) {
-    const duplicate = await Course.findOne({
-      courseCode: req.body.courseCode.toUpperCase(),
-      _id: { $ne: id },
-    });
-    if (duplicate)
-      return res.status(409).json({ success: false, message: "Course code already exists" });
-  }
+    if (req.body.courseCode && req.body.courseCode !== course.courseCode) {
+      const duplicate = await Course.findOne({
+        courseCode: req.body.courseCode.toUpperCase(),
+        _id: { $ne: id },
+      });
+      if (duplicate)
+        return res.status(409).json({ success: false, message: "Course code already exists" });
+    }
 
-  const updated = await Course.findByIdAndUpdate(id, req.body, {
-    new: true,
-    runValidators: true,
-  })
-    .populate("sections", "SectionName Teacher RoomNo")
-    .populate("teachers", "name email");
+    const updated = await Course.findByIdAndUpdate(id, req.body, {
+      new: true,
+      runValidators: true,
+    })
+      .populate("sections", "SectionName Teacher RoomNo")
+      .populate("teachers", "name email");
 
-  return res.status(200).json({
-    success: true,
-    message: "Course updated successfully",
-    data: updated,
-  });
-});
-
-/* ========================================================
-   ✅ DELETE COURSE
-======================================================== */
-const DeleteCourse = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  const course = await Course.findById(id);
-  if (!course)
-    return res.status(404).json({ success: false, message: "Course not found" });
-
-  if (course.sections && course.sections.length > 0) {
-    return res.status(400).json({
-      success: false,
-      message:
-        "Cannot delete course with existing sections. Please remove all sections first.",
-    });
-  }
-
-  await Course.findByIdAndDelete(id);
-  return res.status(200).json({
-    success: true,
-    message: "Course deleted successfully",
-    data: course,
-  });
-});
-
-/* ========================================================
-   ✅ ADD SECTION TO COURSE
-======================================================== */
-const AddSectionToCourse = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  const { sectionId } = req.body;
-
-  if (!sectionId)
-    return res.status(400).json({
-      success: false,
-      message: "Section ID is required",
-    });
-
-  const section = await Section.findById(sectionId);
-  if (!section)
-    return res.status(404).json({ success: false, message: "Section not found" });
-
-  const course = await Course.findById(id);
-  if (!course)
-    return res.status(404).json({ success: false, message: "Course not found" });
-
-  if (course.sections.includes(sectionId)) {
-    return res.status(409).json({
-      success: false,
-      message: "Section already linked to this course",
-    });
-  }
-
-  course.sections.push(sectionId);
-  await course.save();
-
-  section.Course = id;
-  await section.save();
-
-  const updated = await Course.findById(id)
-    .populate("sections", "SectionName Teacher RoomNo")
-    .populate("teachers", "name email");
-
-  return res.status(200).json({
-    success: true,
-    message: "Section added to course successfully",
-    data: updated,
-  });
-});
-
-/* ========================================================
-   ✅ GET COURSE STUDENTS
-======================================================== */
-const GetCourseStudents = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  const course = await Course.findById(id).populate({
-    path: "sections",
-    populate: {
-      path: "Student.Reg_No",
-      select: "name regNo email department Semester",
-    },
-  });
-
-  if (!course)
-    return res.status(404).json({ success: false, message: "Course not found" });
-
-  const studentMap = new Map();
-
-  course.sections.forEach((section) => {
-    section.Student.forEach((student) => {
-      if (student.Reg_No)
-        studentMap.set(student.Reg_No._id.toString(), student.Reg_No);
+    return res.status(200).json({
+      success: true,
+      message: "Course updated successfully",
+      data: updated,
     });
   });
 
-  const students = Array.from(studentMap.values());
+  /* ========================================================
+     ✅ DELETE COURSE
+  ======================================================== */
+  const DeleteCourse = asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const course = await Course.findById(id);
+    if (!course)
+      return res.status(404).json({ success: false, message: "Course not found" });
 
-  return res.status(200).json({
-    success: true,
-    data: {
-      course: {
-        _id: course._id,
-        courseCode: course.courseCode,
-        CourseName: course.CourseName,
+    if (course.sections && course.sections.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Cannot delete course with existing sections. Please remove all sections first.",
+      });
+    }
+
+    await Course.findByIdAndDelete(id);
+    return res.status(200).json({
+      success: true,
+      message: "Course deleted successfully",
+      data: course,
+    });
+  });
+
+  /* ========================================================
+     ✅ ADD SECTION TO COURSE
+  ======================================================== */
+  const AddSectionToCourse = asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const { sectionId } = req.body;
+
+    if (!sectionId)
+      return res.status(400).json({
+        success: false,
+        message: "Section ID is required",
+      });
+
+    const section = await Section.findById(sectionId);
+    if (!section)
+      return res.status(404).json({ success: false, message: "Section not found" });
+
+    const course = await Course.findById(id);
+    if (!course)
+      return res.status(404).json({ success: false, message: "Course not found" });
+
+    if (course.sections.includes(sectionId)) {
+      return res.status(409).json({
+        success: false,
+        message: "Section already linked to this course",
+      });
+    }
+
+    course.sections.push(sectionId);
+    await course.save();
+
+    section.Course = id;
+    await section.save();
+
+    const updated = await Course.findById(id)
+      .populate("sections", "SectionName Teacher RoomNo")
+      .populate("teachers", "name email");
+
+    return res.status(200).json({
+      success: true,
+      message: "Section added to course successfully",
+      data: updated,
+    });
+  });
+
+  /* ========================================================
+     ✅ GET COURSE STUDENTS
+  ======================================================== */
+  const GetCourseStudents = asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    const course = await Course.findById(id).populate({
+      path: "sections",
+      populate: {
+        path: "Student.Reg_No",
+        select: "name regNo email department Semester",
       },
-      totalStudents: students.length,
-      students,
-    },
+    });
+
+    if (!course)
+      return res.status(404).json({ success: false, message: "Course not found" });
+
+    const studentMap = new Map();
+
+    course.sections.forEach((section) => {
+      section.Student.forEach((student) => {
+        if (student.Reg_No)
+          studentMap.set(student.Reg_No._id.toString(), student.Reg_No);
+      });
+    });
+
+    const students = Array.from(studentMap.values());
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        course: {
+          _id: course._id,
+          courseCode: course.courseCode,
+          CourseName: course.CourseName,
+        },
+        totalStudents: students.length,
+        students,
+      },
+    });
   });
-});
 
 
-/* ========================================================
-   ✅ EXPORT
-======================================================== */
-export {
-  CreateCourse,
-  GetAllCourses,
-  getCourses,
-  UpdateCourse,
-  DeleteCourse,
-  AddSectionToCourse,
-  GetCourseStudents
-};
+  /* ========================================================
+     ✅ EXPORT
+  ======================================================== */
+  export {
+    CreateCourse,
+    GetAllCourses,
+    getCourses,
+    UpdateCourse,
+    DeleteCourse,
+    AddSectionToCourse,
+    GetCourseStudents
+  };
