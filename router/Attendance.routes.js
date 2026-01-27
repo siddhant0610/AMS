@@ -7,7 +7,9 @@ import {
     markAttendanceWithFace, 
     getMyAttendance,
     getSessionDetails,
-    checkAttendanceStatus
+    checkAttendanceStatus,
+    linkPermanentSlot,
+    createAdHocSession
 } from "../controller/Attendance.controller.js";
 
 const router = express.Router();
@@ -58,6 +60,9 @@ if (!fs.existsSync(TEMP_UPLOAD_DIR)) fs.mkdirSync(TEMP_UPLOAD_DIR, { recursive: 
 router.post("/mark-face/:attendanceId", verifyJWT,upload.array("images",4), markAttendanceWithFace);
 router.get("/my",verifyJWT, verifyJWT,getMyAttendance);
 router.get("/session/:id", verifyJWT,getSessionDetails);
+// I will add timetable route later
+router.post("/create-substituion",verifyJWT,createAdHocSession)
+router.post("/add-permanent", verifyJWT,linkPermanentSlot);
 router.get("/status/:id", verifyJWT,checkAttendanceStatus);
 // ✅ 3. Export attendance report (Excel)
 // Example: GET /api/attendance/export/:sectionId

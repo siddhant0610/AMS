@@ -202,63 +202,88 @@ export const getSessionDetails = asyncHandler(async (req, res) => {
     data: session
   });
 });
+
+// Helper: Add 50 minutes to "HH:MM"
+const calculateEndTime = (startTime) => {
+    const [hours, minutes] = startTime.split(':').map(Number);
+    const date = new Date();
+    date.setHours(hours, minutes + 50); // Fixed 50 mins duration
+    
+    return date.toLocaleTimeString('en-US', {
+        hour12: false, 
+        hour: '2-digit', 
+        minute: '2-digit',
+        timeZone: "Asia/Kolkata"
+    });
+};
+
 export const createAdHocSession = asyncHandler(async (req, res) => {
   const user = req.user;
-  const { sectionId, date, startTime, endTime } = req.body;
+  // Input: ["09:00", "11:00"] allow multiple slots for one date
+  const { sectionName, date, timeSlots } = req.body;
 
-  // 1. Verify Teacher & Section
-  const teacher = await Teacher.findOne({ email: user.email });
-  const section = await Section.findById(sectionId).populate("Student.Reg_No");
-  if (!section) throw new ApiError(404, "Section not found");
-
-  // 2. Prepare Date (Defaults to Today if empty)
-  const targetDate = date ? new Date(date) : getISTDate();
-  targetDate.setHours(0, 0, 0, 0);
-  
-  // We just get the full name "Saturday", let the Schema shorten it to "Sat"
-  const dayName = targetDate.toLocaleDateString("en-US", { weekday: 'long', timeZone: "Asia/Kolkata" });
-
-  // 3. Conflict Check
-  const clash = await Attendance.findOne({
-    section: sectionId,
-    date: targetDate,
-    $or: [
-      { startTime: { $lt: endTime }, endTime: { $gt: startTime } }
-    ]
-  });
-
-  if (clash) {
-    return res.status(409).json({
-      success: false,
-      message: `Clash! Section busy from ${clash.startTime} to ${clash.endTime}.`
-    });
+  if (!date || !timeSlots || timeSlots.length === 0) {
+      throw new ApiError(400, "Date and at least one time slot are required.");
   }
 
-  // 4. Create Session (Schema will handle the ID formatting)
-  const newSession = await Attendance.create({
-      section: sectionId,
-      course: section.Course,
-      markedBy: teacher._id,
-      
-      date: targetDate,
-      day: dayName, 
-      startTime,
-      endTime,
-      roomNo: section.RoomNo,
-      
-      students: section.Student.map(s => s.Reg_No ? ({ 
-          student: s.Reg_No._id, status: "absent" 
-      }) : null).filter(Boolean),
-      
-      isLocked: false,
-      isExtraClass: true
-  });
+  // 1. Verify Teacher
+  const teacher = await Teacher.findOne({ email: user.email });
+  if (!teacher) throw new ApiError(404, "Teacher profile not found");
 
-  // 5. Success (No Redirect, just confirmation)
+  // 2. Find Section by Name
+  const section = await Section.findOne({ SectionName: sectionName })
+      .populate("Student.Reg_No");
+  
+  if (!section) throw new ApiError(404, `Section '${sectionName}' not found`);
+
+  // 3. Prepare Date
+  const targetDate = new Date(date);
+  const dayName = targetDate.toLocaleDateString("en-US", { weekday: 'long', timeZone: "Asia/Kolkata" });
+
+  // 4. Create Sessions (Loop through slots)
+  const createdSessions = [];
+
+  for (const start of timeSlots) {
+      const end = calculateEndTime(start);
+
+      // SIMPLE CONFLICT CHECK: Is this specific section busy?
+      const clash = await Attendance.findOne({
+          section: section._id,
+          date: targetDate,
+          $or: [{ startTime: { $lt: end }, endTime: { $gt: start } }]
+      });
+
+      if (clash) {
+          // We skip the clash or throw error depending on preference. 
+          // Here we throw to alert the user immediately.
+          throw new ApiError(409, `Clash! ${sectionName} is busy from ${clash.startTime} to ${clash.endTime}.`);
+      }
+
+      // Create Session
+      const session = await Attendance.create({
+          section: section._id,
+          course: section.Course,
+          markedBy: teacher._id,
+          
+          date: targetDate,
+          day: dayName, 
+          startTime: start,
+          endTime: end,
+          roomNo: section.RoomNo,
+          
+          students: section.Student.map(s => s.Reg_No ? ({ 
+              student: s.Reg_No._id, status: "absent" 
+          }) : null).filter(Boolean),
+          
+          isExtraClass: true
+      });
+      createdSessions.push(session);
+  }
+
   res.status(200).json({
       success: true,
-      message: "Extra class created successfully",
-      sessionId: newSession._id
+      message: `Successfully created ${createdSessions.length} extra class(es) for ${sectionName}`,
+      date: date
   });
 });
 
@@ -267,64 +292,65 @@ export const createAdHocSession = asyncHandler(async (req, res) => {
    Action: Updates the 'Section' document permanently.
    Body: { "sectionId": "...", "day": "Monday", "startTime": "10:00", "endTime": "11:00" }
 ============================================================ */
-export const addPermanentSlot = asyncHandler(async (req, res) => {
+export const linkPermanentSlot = asyncHandler(async (req, res) => {
   const user = req.user;
-  const { sectionId, day, startTime, endTime } = req.body;
+  // Input: Neha wants to sync "mySection" with "targetSection" on "day"
+  const { SectionName, targetSectionName, day } = req.body;
 
   // 1. Validate Teacher
   const teacher = await Teacher.findOne({ email: user.email });
-  if (!teacher) throw new ApiError(403, "Teacher not found");
+  if (!teacher) throw new ApiError(404, "Teacher not found");
 
-  // 2. Find Section
-  const section = await Section.findById(sectionId);
-  if (!section) throw new ApiError(404, "Section not found");
+  // 2. Find Both Sections
+  const mySection = await Section.findOne({ SectionName: SectionName });
+  if (!mySection) throw new ApiError(404, `Your section '${SectionName}' not found`);
 
-  // Optional: Security Check
-  // Only allow the owner of the section (or Admin) to modify the permanent timetable
-  if (section.Teacher.toString() !== teacher._id.toString()) {
-      return res.status(403).json({ 
-          success: false, 
-          message: "You can only edit the permanent timetable for your own sections." 
-      });
-  }
+  const targetSection = await Section.findOne({ SectionName: targetSectionName });
+  if (!targetSection) throw new ApiError(404, `Target section '${targetSectionName}' not found`);
 
-  // ============================================================
-  // 🛡️ CONFLICT CHECK (Permanent Timetable)
-  // We check if the 'Day' array inside this Section already has a slot
-  // that overlaps with the new time on the same day.
-  // ============================================================
-  
-  // Logic: (ExistingStart < NewEnd) AND (ExistingEnd > NewStart)
-  const isClash = section.Day.some(slot => {
-      if (slot.Day !== day) return false; // Different day? No clash.
-      return (slot.startTime < endTime && slot.endTime > startTime);
-  });
+  // 3. GET THE TIME (Fetch from Target)
+  // We look into Amit's timetable for the requested Day
+  const targetSlots = targetSection.Day.filter(slot => slot.Day === day);
 
-  if (isClash) {
-      return res.status(409).json({
+  if (targetSlots.length === 0) {
+      return res.status(404).json({
           success: false,
-          message: `Conflict! This section already has a class on ${day} during this time.`
+          message: `Section '${targetSectionName}' has no class on ${day} to copy.`
       });
   }
 
-  // ============================================================
-  // ✅ UPDATE TIMETABLE
-  // ============================================================
-  section.Day.push({
-      Day: day,        // e.g. "Monday"
-      startTime: startTime,
-      endTime: endTime
+  // 4. COPY Time to My Section
+  let addedCount = 0;
+  
+  targetSlots.forEach(targetSlot => {
+      // Check for duplicates to avoid adding the same slot twice
+      const alreadyExists = mySection.Day.some(mySlot => 
+          mySlot.Day === day && mySlot.startTime === targetSlot.startTime
+      );
+
+      if (!alreadyExists) {
+          mySection.Day.push({
+              Day: day,
+              startTime: targetSlot.startTime, // Copied from Amit
+              endTime: targetSlot.endTime      // Copied from Amit
+          });
+          addedCount++;
+      }
   });
 
-  await section.save();
+  if (addedCount === 0) {
+      return res.status(400).json({
+          success: false,
+          message: `You are already synced with ${targetSectionName} on ${day}.`
+      });
+  }
+
+  await mySection.save();
 
   res.status(200).json({
       success: true,
-      message: `Permanently added class to ${section.SectionName} for every ${day}.`,
-      data: {
-          day,
-          time: `${startTime} - ${endTime}`
-      }
+      message: `Synced! Added ${addedCount} slot(s) to ${SectionName} from ${targetSectionName}.`,
+      syncedSlots: targetSlots.map(s => `${s.startTime}-${s.endTime}`)
   });
 });
 /* ==========================================================================
