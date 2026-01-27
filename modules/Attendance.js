@@ -143,45 +143,41 @@ AttendanceSchema.pre("save", async function (next) {
     this.totalNotConsidered = this.students.filter(s => s.status === 'not-considered').length;
     
     const total = this.students.length;
-    // Prevent division by zero
     this.attendancePercentage = total > 0 
       ? Math.round((this.totalPresent / total) * 100) 
       : 0;
   }
 
   // ---------------------------------------------------------
-  // 2️⃣ PART 2: Generate Custom ID (Asynchronous)
-  // Only runs if customId is missing
+  // 2️⃣ PART 2: Generate Unique Custom ID (Asynchronous)
   // ---------------------------------------------------------
   if (!this.customId) {
     try {
-      // ⚠️ SAFE FETCHING: Use mongoose.model() to avoid circular dependency crashes
       const CourseModel = mongoose.model("Course");
       const SectionModel = mongoose.model("Section");
 
       const courseDoc = await CourseModel.findById(this.course).select("courseCode");
       const sectionDoc = await SectionModel.findById(this.section).select("SectionName");
 
-      // Format Date: Use India Locale to ensure the date matches the 'Day'
-      // (toISOString gives UTC, which might show the previous date if early morning)
-    const datePart = this.date.toLocaleDateString("en-GB", {
-         day: '2-digit', month: '2-digit', year: '2-digit',
-         timeZone: "Asia/Kolkata"
+      // Format Date: "28-01-26" (DD-MM-YY)
+      const datePart = this.date.toLocaleDateString("en-GB", {
+          day: '2-digit', month: '2-digit', year: '2-digit',
+          timeZone: "Asia/Kolkata"
       }).replace(/\//g, '-');
 
       const cCode = courseDoc ? courseDoc.courseCode : "UNK";
       const sName = sectionDoc ? sectionDoc.SectionName : "UNK";
 
-      // Format: Monday:2026-01-24:CS101:SecA
-      this.customId = `${this.day.slice(0,3)}:${datePart}-${cCode}-${sName}`;
-      
+      // 🛠️ THE FIX: Add ':startTime' at the end
+      // New Format: Wed:28-01-26:CSE3203:SecA:09:00
+      this.customId = `${this.day}:${datePart}:${cCode}:${sName}:${this.startTime}`;
+
     } catch (error) {
       console.error("⚠️ Error generating customId:", error);
-      // We continue without customId rather than crashing the whole save
+      // Fallback to random ID if generation fails to prevent crash
+      this.customId = new mongoose.Types.ObjectId().toString();
     }
   }
-
   next();
 });
-
 export const Attendance = mongoose.model('Attendance', AttendanceSchema);
