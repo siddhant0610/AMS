@@ -294,23 +294,22 @@ export const createAdHocSession = asyncHandler(async (req, res) => {
 ============================================================ */
 export const linkPermanentSlot = asyncHandler(async (req, res) => {
   const user = req.user;
-  // Input: Neha wants to sync "mySection" with "targetSection" on "day"
-  const { SectionName, targetSectionName, day } = req.body;
+  const { mySectionName, targetSectionName, day } = req.body;
 
   // 1. Validate Teacher
   const teacher = await Teacher.findOne({ email: user.email });
   if (!teacher) throw new ApiError(404, "Teacher not found");
 
   // 2. Find Both Sections
-  const mySection = await Section.findOne({ SectionName: SectionName });
-  if (!mySection) throw new ApiError(404, `Your section '${SectionName}' not found`);
+  const mySection = await Section.findOne({ SectionName: mySectionName });
+  if (!mySection) throw new ApiError(404, `Your section '${mySectionName}' not found`);
 
   const targetSection = await Section.findOne({ SectionName: targetSectionName });
   if (!targetSection) throw new ApiError(404, `Target section '${targetSectionName}' not found`);
 
   // 3. GET THE TIME (Fetch from Target)
-  // We look into Amit's timetable for the requested Day
-  const targetSlots = targetSection.Day.filter(slot => slot.Day === day);
+  // 🛠️ FIX: Check if the 'Day' array INCLUDES the requested day
+  const targetSlots = targetSection.Day.filter(slot => slot.Day.includes(day));
 
   if (targetSlots.length === 0) {
       return res.status(404).json({
@@ -323,16 +322,19 @@ export const linkPermanentSlot = asyncHandler(async (req, res) => {
   let addedCount = 0;
   
   targetSlots.forEach(targetSlot => {
-      // Check for duplicates to avoid adding the same slot twice
+      // Check for duplicates
+      // Note: We also assume mySlot.Day might be an array, so we check .includes here too if needed, 
+      // but usually we push singular objects. Let's stick to safe string comparison for now 
+      // or check if we already have a slot covering this time on this day.
       const alreadyExists = mySection.Day.some(mySlot => 
-          mySlot.Day === day && mySlot.startTime === targetSlot.startTime
+          mySlot.Day.includes(day) && mySlot.startTime === targetSlot.startTime
       );
 
       if (!alreadyExists) {
           mySection.Day.push({
-              Day: day,
-              startTime: targetSlot.startTime, // Copied from Amit
-              endTime: targetSlot.endTime      // Copied from Amit
+              Day: [day], // 👈 Push as an array to match your schema format
+              startTime: targetSlot.startTime, 
+              endTime: targetSlot.endTime      
           });
           addedCount++;
       }
@@ -349,7 +351,7 @@ export const linkPermanentSlot = asyncHandler(async (req, res) => {
 
   res.status(200).json({
       success: true,
-      message: `Synced! Added ${addedCount} slot(s) to ${SectionName} from ${targetSectionName}.`,
+      message: `Synced! Added ${addedCount} slot(s) to ${mySectionName} from ${targetSectionName}.`,
       syncedSlots: targetSlots.map(s => `${s.startTime}-${s.endTime}`)
   });
 });
