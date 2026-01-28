@@ -61,7 +61,7 @@ router.post("/mark-face/:attendanceId", verifyJWT,upload.array("images",4), mark
 router.get("/my",verifyJWT, verifyJWT,getMyAttendance);
 router.get("/session/:id", verifyJWT,getSessionDetails);
 // I will add timetable route later
-router.post("/create-substituion",verifyJWT,createAdHocSession)
+router.post("/create_class_temp",verifyJWT,createAdHocSession)
 router.post("/add-permanent", verifyJWT,addPermanentSlot);
 router.get("/status/:id", verifyJWT,checkAttendanceStatus);
 // ✅ 3. Export attendance report (Excel)
