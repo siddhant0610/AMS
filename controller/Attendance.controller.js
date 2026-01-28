@@ -292,49 +292,50 @@ export const createAdHocSession = asyncHandler(async (req, res) => {
    Action: Updates the 'Section' document permanently.
    Body: { "sectionId": "...", "day": "Monday", "startTime": "10:00", "endTime": "11:00" }
 ============================================================ */
-export const linkPermanentSlot = asyncHandler(async (req, res) => {
+export const addPermanentSlot = asyncHandler(async (req, res) => {
   const user = req.user;
-  const { mySectionName, targetSectionName, day } = req.body;
+  
+  // 1. INPUT: No endTime needed!
+  // days: ["Monday", "Wednesday", "Friday"]
+  const { sectionName, days, startTime } = req.body;
 
-  // 1. Validate Teacher
+  if (!days || !Array.isArray(days) || days.length === 0) {
+      throw new ApiError(400, "Please provide a list of days (e.g., ['Monday'])");
+  }
+
+  // 2. Auto-Calculate End Time
+  const endTime = calculateEndTime(startTime);
+
+  // 3. Verify Teacher
   const teacher = await Teacher.findOne({ email: user.email });
   if (!teacher) throw new ApiError(404, "Teacher not found");
 
-  // 2. Find Both Sections
-  const mySection = await Section.findOne({ SectionName: mySectionName });
-  if (!mySection) throw new ApiError(404, `Your section '${mySectionName}' not found`);
+  // 4. Find Section (Unique Name)
+  const section = await Section.findOne({ SectionName: sectionName });
+  if (!section) throw new ApiError(404, `Section '${sectionName}' not found`);
 
-  const targetSection = await Section.findOne({ SectionName: targetSectionName });
-  if (!targetSection) throw new ApiError(404, `Target section '${targetSectionName}' not found`);
-
-  // 3. GET THE TIME (Fetch from Target)
-  // 🛠️ FIX: Check if the 'Day' array INCLUDES the requested day
-  const targetSlots = targetSection.Day.filter(slot => slot.Day.includes(day));
-
-  if (targetSlots.length === 0) {
-      return res.status(404).json({
+  // 5. Security: Only the Owner can edit
+  if (section.Teacher.toString() !== teacher._id.toString()) {
+      return res.status(403).json({
           success: false,
-          message: `Section '${targetSectionName}' has no class on ${day} to copy.`
+          message: "You can only edit permanent slots for your own sections."
       });
   }
 
-  // 4. COPY Time to My Section
+  // 6. LOOP & ADD
   let addedCount = 0;
-  
-  targetSlots.forEach(targetSlot => {
-      // Check for duplicates
-      // Note: We also assume mySlot.Day might be an array, so we check .includes here too if needed, 
-      // but usually we push singular objects. Let's stick to safe string comparison for now 
-      // or check if we already have a slot covering this time on this day.
-      const alreadyExists = mySection.Day.some(mySlot => 
-          mySlot.Day.includes(day) && mySlot.startTime === targetSlot.startTime
+
+  days.forEach(day => {
+      // Check if slot already exists to prevent duplicates
+      const exists = section.Day.some(slot => 
+          slot.Day.includes(day) && slot.startTime === startTime
       );
 
-      if (!alreadyExists) {
-          mySection.Day.push({
-              Day: [day], // 👈 Push as an array to match your schema format
-              startTime: targetSlot.startTime, 
-              endTime: targetSlot.endTime      
+      if (!exists) {
+          section.Day.push({
+              Day: [day], // Schema expects an array of strings
+              startTime: startTime,
+              endTime: endTime // 👈 Auto-filled (e.g., "10:50")
           });
           addedCount++;
       }
@@ -343,16 +344,16 @@ export const linkPermanentSlot = asyncHandler(async (req, res) => {
   if (addedCount === 0) {
       return res.status(400).json({
           success: false,
-          message: `You are already synced with ${targetSectionName} on ${day}.`
+          message: `Time slot ${startTime} already exists for all selected days.`
       });
   }
 
-  await mySection.save();
+  await section.save();
 
   res.status(200).json({
       success: true,
-      message: `Synced! Added ${addedCount} slot(s) to ${mySectionName} from ${targetSectionName}.`,
-      syncedSlots: targetSlots.map(s => `${s.startTime}-${s.endTime}`)
+      message: `Added class at ${startTime} - ${endTime} for [${days.join(", ")}]`,
+      section: sectionName
   });
 });
 /* ==========================================================================
