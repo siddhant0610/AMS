@@ -322,136 +322,98 @@ export const createAdHocSession = asyncHandler(async (req, res) => {
 // =========================================================================
 // 2️⃣ PERMANENT CLASS (Link / Sync Logic)
 // =========================================================================
-export const linkPermanentClass = asyncHandler(async (req, res) => {
+export const addPermanentSlot = asyncHandler(async (req, res) => {
     const user = req.user;
+    
+    // 1. INPUT: Only the 'Source Section' is needed.
+    // We don't ask for time. We don't ask for "mySection" (we find it).
+    const { year, branch, courseName, section, classType, days } = req.body;
 
-    // 1. INPUT VALIDATION
-    // 'section' = Target (Source)
-    // 'mySection' = Your Section (Destination)
-    const { courseName, section, classType, days, mySection } = req.body;
+    if (classType !== 'permanent') throw new ApiError(400, "Invalid classType.");
+    if (!days || !Array.isArray(days)) throw new ApiError(400, "Days array is required.");
 
-    if (classType !== 'permanent') {
-        throw new ApiError(400, "Invalid classType. For this endpoint, use 'permanent'.");
-    }
-    if (!days || !Array.isArray(days) || !mySection) {
-        throw new ApiError(400, "Days array and 'mySection' name are required.");
-    }
+    // 2. VERIFY TEACHER
+    const teacher = await Teacher.findOne({ email: user.email });
+    if (!teacher) throw new ApiError(404, "Teacher not found.");
 
-    // 2. FIND COURSE
-    const courseDoc = await Course.findOne({ 
-        CourseName: { $regex: new RegExp(courseName, "i") } 
-    });
-    if (!courseDoc) throw new ApiError(404, `Course '${courseName}' not found.`);
+    // 3. FIND SOURCE SECTION (Where the time is)
+    // We traverse THIS section to get the slots.
+    const courseDoc = await Course.findOne({ CourseName: { $regex: new RegExp(courseName, "i") } });
+    if (!courseDoc) throw new ApiError(404, "Course not found.");
 
-    // 3. FIND TARGET SECTION (SOURCE)
-    const targetSectionDoc = await Section.findOne({ 
+    const sourceSection = await Section.findOne({ 
         SectionName: section, 
         Course: courseDoc._id 
     });
-    if (!targetSectionDoc) throw new ApiError(404, `Target Section '${section}' (Source) not found.`);
+    
+    if (!sourceSection) throw new ApiError(404, `Source Section '${section}' not found. Cannot copy time.`);
 
-    // 4. FIND MY SECTION (DESTINATION)
-    const mySectionDoc = await Section.findOne({
-        SectionName: mySection,
-        Course: courseDoc._id
+    // 4. FIND DESTINATION SECTION (The one Mahesh Sir owns)
+    // We find the section for this Course that belongs to THIS Teacher.
+    const mySection = await Section.findOne({
+        Course: courseDoc._id,
+        Teacher: teacher._id
     });
-    if (!mySectionDoc) throw new ApiError(404, `Your Section '${mySection}' (Destination) not found.`);
 
-    // 5. AUTH CHECK (Only Owner can update their section)
-    const teacher = await Teacher.findOne({ email: user.email });
-    if (mySectionDoc.Teacher.toString() !== teacher._id.toString()) {
-        throw new ApiError(403, "You can only update the timetable for your own section.");
+    if (!mySection) {
+        throw new ApiError(404, `You (Mahesh Sir) do not have a section assigned for course '${courseName}'.`);
     }
 
-    // 6. SYNC LOOP
-    let syncedCount = 0;
+    // Prevent linking to itself
+    if (mySection._id.toString() === sourceSection._id.toString()) {
+        return res.status(400).json({ 
+            success: false, 
+            message: "You are trying to link the section to itself. If you want to create a NEW time, please use the manual route." 
+        });
+    }
+
+    // 5. TRAVERSE & ADD (The Logic You Wanted)
+    let addedCount = 0;
 
     days.forEach(shortDay => {
-        const fullDay = mapDayToFull(shortDay); // "MON" -> "Monday"
+        const fullDay = mapDayToFull(shortDay); // "TUE" -> "Tuesday"
 
-        // A. Find classes in Target for this day
-        const targetSlots = targetSectionDoc.Day.filter(s => s.Day.includes(fullDay));
+        // Traverse Source Section for this day
+        const sourceSlots = sourceSection.Day.filter(s => s.Day.includes(fullDay));
 
-        if (targetSlots.length === 0) {
-            // Logic: "if not present on that day, reject it" -> We simply skip.
+        if (sourceSlots.length === 0) {
+            // "If not present on that day... reject it"
+            console.log(`Skipping ${fullDay}: No class found in ${section}.`);
             return;
         }
 
-        // B. Copy valid slots
-        targetSlots.forEach(tSlot => {
-            // Check for existing slot in My Section (Avoid Duplicates)
-            const alreadyExists = mySectionDoc.Day.some(mSlot => 
-                mSlot.Day.includes(fullDay) && mSlot.startTime === tSlot.startTime
+        sourceSlots.forEach(slot => {
+            // Check if My Section already has this time
+            const exists = mySection.Day.some(mySlot => 
+                mySlot.Day.includes(fullDay) && mySlot.startTime === slot.startTime
             );
 
-            if (!alreadyExists) {
-                mySectionDoc.Day.push({
-                    Day: [fullDay], 
-                    startTime: tSlot.startTime, // Sync Start
-                    endTime: tSlot.endTime      // Sync End (Copy exact duration)
+            if (!exists) {
+                mySection.Day.push({
+                    Day: [fullDay],
+                    startTime: slot.startTime, // 👈 Got it from traversing!
+                    endTime: slot.endTime
                 });
-                syncedCount++;
+                addedCount++;
             }
         });
     });
 
-    if (syncedCount === 0) {
-        return res.status(400).json({
-            success: false,
-            message: "No new slots added. Either the target has no classes on these days, or you are already synced."
+    if (addedCount === 0) {
+        return res.status(400).json({ 
+            success: false, 
+            message: `No slots added. Either '${section}' has no classes on these days, or you are already synced.` 
         });
     }
 
-    await mySectionDoc.save();
+    await mySection.save();
 
     res.status(200).json({
         success: true,
-        message: `Synced! Copied ${syncedCount} slots from ${section} to ${mySection}.`,
-        data: {
-            days: days,
-            source: section,
-            destination: mySection
-        }
+        message: `Successfully added ${addedCount} slots to ${mySection.SectionName} (copied from ${section}).`
     });
 });
-// export const linkPermanentClass = asyncHandler(async (req, res) => {
-//     const user = req.user;
-//     const { courseName, section, classType, days, mySection } = req.body;
-
-//     // 1. Find Course
-//     const courseDoc = await Course.findOne({ 
-//         CourseName: { $regex: new RegExp(courseName, "i") } 
-//     });
-    
-//     if (!courseDoc) throw new ApiError(404, `DEBUG: Course with name '${courseName}' not found.`);
-
-//     console.log("------------------------------------------------");
-//     console.log(`🔎 SEARCHING FOR: ${courseName}`);
-//     console.log(`✅ FOUND COURSE ID: ${courseDoc._id.toString()}`);
-//     console.log("------------------------------------------------");
-
-//     // 2. Try to Find YOUR Section (Destination)
-//     const mySectionDoc = await Section.findOne({
-//         SectionName: mySection
-//     });
-
-//     if (!mySectionDoc) {
-//         throw new ApiError(404, `DEBUG: Section '${mySection}' does not exist at all.`);
-//     }
-
-//     console.log(`📂 SECTION '${mySection}' EXISTS.`);
-//     console.log(`🔗 IT IS LINKED TO COURSE ID: ${mySectionDoc.Course.toString()}`);
-//     console.log("------------------------------------------------");
-
-//     // 3. CHECK MATCH
-//     if (mySectionDoc.Course.toString() !== courseDoc._id.toString()) {
-//         throw new ApiError(409, `⚠️ MISMATCH! \nRequest Found Course: ${courseDoc._id} \nSection is Linked to: ${mySectionDoc.Course} \n\nSolution: Check the exact Course Name in DB.`);
-//     }
-
-//     // ... (Rest of the controller if match is successful) ...
-//     res.status(200).json({ success: true, message: "Debug complete. Check console logs." });
-// });
-/* ==========================================================================
+/*=============
    4️⃣ GET MY ATTENDANCE STATS
 ========================================================================== */
 export const getMyAttendance = asyncHandler(async (req, res) => {
