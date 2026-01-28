@@ -9,6 +9,7 @@ import { Attendance } from "../modules/Attendance.js";
 import { Section } from "../modules/Section.js";
 import { Teacher } from "../modules/Teacher.js";
 import { Student } from "../modules/Student.js";
+import { Course } from "../modules/Course.js";
 // ❌ Submission Import Removed
 
 // Services
@@ -216,146 +217,242 @@ const calculateEndTime = (startTime) => {
         timeZone: "Asia/Kolkata"
     });
 };
+/**
+ * Maps short day codes to full day names.
+ * "MON" -> "Monday"
+ */
+const mapDayToFull = (shortDay) => {
+    const map = {
+        "MON": "Monday", "TUE": "Tuesday", "WED": "Wednesday", 
+        "THU": "Thursday", "FRI": "Friday", "SAT": "Saturday", "SUN": "Sunday"
+    };
+    return map[shortDay.toUpperCase()] || shortDay;
+};
 
+
+// =========================================================================
+// 1️⃣ AD-HOC SESSION (Temporary Class)
+// =========================================================================
 export const createAdHocSession = asyncHandler(async (req, res) => {
-  const user = req.user;
-  // Input: ["09:00", "11:00"] allow multiple slots for one date
-  const { sectionName, date, timeSlots } = req.body;
+    const teacher = req.user;
+    
+    // 1. INPUT VALIDATION
+    const { year, branch, courseName, section, classType, date, timeSlots } = req.body;
 
-  if (!date || !timeSlots || timeSlots.length === 0) {
-      throw new ApiError(400, "Date and at least one time slot are required.");
-  }
+    if (classType !== 'temporary') {
+        throw new ApiError(400, "Invalid classType. For this endpoint, use 'temporary'.");
+    }
+    if (!date || !timeSlots || !Array.isArray(timeSlots) || timeSlots.length === 0) {
+        throw new ApiError(400, "Date and timeSlots (array) are required.");
+    }
 
-  // 1. Verify Teacher
-  const teacher = await Teacher.findOne({ email: user.email });
-  if (!teacher) throw new ApiError(404, "Teacher profile not found");
+    // 2. FIND COURSE (Case-Insensitive Regex)
+    const courseDoc = await Course.findOne({ 
+        CourseName: { $regex: new RegExp(courseName, "i") } 
+        // Optional: Add 'branch' or 'year' filter here if your schema allows
+    });
+    if (!courseDoc) throw new ApiError(404, `Course '${courseName}' not found.`);
 
-  // 2. Find Section by Name
-  const section = await Section.findOne({ SectionName: sectionName })
-      .populate("Student.Reg_No");
-  
-  if (!section) throw new ApiError(404, `Section '${sectionName}' not found`);
+    // 3. FIND SECTION (Unique identifier: Name + Course)
+    const sectionDoc = await Section.findOne({ 
+        SectionName: section,
+        Course: courseDoc._id
+    }).populate("Student.Reg_No");
 
-  // 3. Prepare Date
-  const targetDate = new Date(date);
-  const dayName = targetDate.toLocaleDateString("en-US", { weekday: 'long', timeZone: "Asia/Kolkata" });
+    if (!sectionDoc) throw new ApiError(404, `Section '${section}' not found.`);
 
-  // 4. Create Sessions (Loop through slots)
-  const createdSessions = [];
+    // 4. PREPARE SESSION DATA
+    const targetDate = new Date(date);
+    const dayName = targetDate.toLocaleDateString("en-US", { weekday: 'long', timeZone: "Asia/Kolkata" });
+    const createdSessions = [];
 
-  for (const start of timeSlots) {
-      const end = calculateEndTime(start);
+    // 5. PROCESS SLOTS LOOP
+    for (const start of timeSlots) {
+        // Auto-calculate End Time (50 mins)
+        const end = calculateEndTime(start);
 
-      // SIMPLE CONFLICT CHECK: Is this specific section busy?
-      const clash = await Attendance.findOne({
-          section: section._id,
-          date: targetDate,
-          $or: [{ startTime: { $lt: end }, endTime: { $gt: start } }]
-      });
+        // 🚨 ROOM COLLISION CHECK
+        // Check if ANY class exists in this room during this time window
+        const roomClash = await Attendance.findOne({
+            roomNo: sectionDoc.RoomNo,
+            date: targetDate,
+            $or: [
+                { startTime: { $lt: end }, endTime: { $gt: start } } // Overlap Formula
+            ]
+        });
 
-      if (clash) {
-          // We skip the clash or throw error depending on preference. 
-          // Here we throw to alert the user immediately.
-          throw new ApiError(409, `Clash! ${sectionName} is busy from ${clash.startTime} to ${clash.endTime}.`);
-      }
+        if (roomClash) {
+            // Option: Throw error or skip. We throw error to alert the user.
+            throw new ApiError(409, `Room ${sectionDoc.RoomNo} is busy at ${start} (Occupied by another class).`);
+        }
 
-      // Create Session
-      const session = await Attendance.create({
-          section: section._id,
-          course: section.Course,
-          markedBy: teacher._id,
-          
-          date: targetDate,
-          day: dayName, 
-          startTime: start,
-          endTime: end,
-          roomNo: section.RoomNo,
-          
-          students: section.Student.map(s => s.Reg_No ? ({ 
-              student: s.Reg_No._id, status: "absent" 
-          }) : null).filter(Boolean),
-          
-          isExtraClass: true
-      });
-      createdSessions.push(session);
-  }
+        // ✅ CREATE SESSION
+        const newSession = await Attendance.create({
+            section: sectionDoc._id,
+            course: courseDoc._id,
+            markedBy: teacher._id, // The logged-in teacher creating the extra class
+            
+            date: targetDate,
+            day: dayName,
+            startTime: start,
+            endTime: end,
+            roomNo: sectionDoc.RoomNo,
+            
+            // Map students to attendance array
+            students: sectionDoc.Student.map(s => s.Reg_No ? ({ 
+                student: s.Reg_No._id, status: "absent" 
+            }) : null).filter(Boolean),
+            
+            isExtraClass: true
+        });
 
-  res.status(200).json({
-      success: true,
-      message: `Successfully created ${createdSessions.length} extra class(es) for ${sectionName}`,
-      date: date
-  });
+        createdSessions.push(newSession);
+    }
+
+    res.status(200).json({
+        success: true,
+        message: `Successfully created ${createdSessions.length} temporary session(s).`,
+        data: {
+            date: date,
+            section: section,
+            times: timeSlots
+        }
+    });
 });
 
-/* ============================================================
-   🔄 ADD PERMANENT SLOT (Repeat Option)
-   Action: Updates the 'Section' document permanently.
-   Body: { "sectionId": "...", "day": "Monday", "startTime": "10:00", "endTime": "11:00" }
-============================================================ */
-export const addPermanentSlot = asyncHandler(async (req, res) => {
-  const user = req.user;
-  
-  // 1. INPUT: No endTime needed!
-  // days: ["Monday", "Wednesday", "Friday"]
-  const { sectionName, days, startTime } = req.body;
 
-  if (!days || !Array.isArray(days) || days.length === 0) {
-      throw new ApiError(400, "Please provide a list of days (e.g., ['Monday'])");
-  }
+// =========================================================================
+// 2️⃣ PERMANENT CLASS (Link / Sync Logic)
+// =========================================================================
+export const linkPermanentClass = asyncHandler(async (req, res) => {
+    const user = req.user;
 
-  // 2. Auto-Calculate End Time
-  const endTime = calculateEndTime(startTime);
+    // 1. INPUT VALIDATION
+    // 'section' = Target (Source)
+    // 'mySection' = Your Section (Destination)
+    const { courseName, section, classType, days, mySection } = req.body;
 
-  // 3. Verify Teacher
-  const teacher = await Teacher.findOne({ email: user.email });
-  if (!teacher) throw new ApiError(404, "Teacher not found");
+    if (classType !== 'permanent') {
+        throw new ApiError(400, "Invalid classType. For this endpoint, use 'permanent'.");
+    }
+    if (!days || !Array.isArray(days) || !mySection) {
+        throw new ApiError(400, "Days array and 'mySection' name are required.");
+    }
 
-  // 4. Find Section (Unique Name)
-  const section = await Section.findOne({ SectionName: sectionName });
-  if (!section) throw new ApiError(404, `Section '${sectionName}' not found`);
+    // 2. FIND COURSE
+    const courseDoc = await Course.findOne({ 
+        CourseName: { $regex: new RegExp(courseName, "i") } 
+    });
+    if (!courseDoc) throw new ApiError(404, `Course '${courseName}' not found.`);
 
-  // 5. Security: Only the Owner can edit
-  if (section.Teacher.toString() !== teacher._id.toString()) {
-      return res.status(403).json({
-          success: false,
-          message: "You can only edit permanent slots for your own sections."
-      });
-  }
+    // 3. FIND TARGET SECTION (SOURCE)
+    const targetSectionDoc = await Section.findOne({ 
+        SectionName: section, 
+        Course: courseDoc._id 
+    });
+    if (!targetSectionDoc) throw new ApiError(404, `Target Section '${section}' (Source) not found.`);
 
-  // 6. LOOP & ADD
-  let addedCount = 0;
+    // 4. FIND MY SECTION (DESTINATION)
+    const mySectionDoc = await Section.findOne({
+        SectionName: mySection,
+        Course: courseDoc._id
+    });
+    if (!mySectionDoc) throw new ApiError(404, `Your Section '${mySection}' (Destination) not found.`);
 
-  days.forEach(day => {
-      // Check if slot already exists to prevent duplicates
-      const exists = section.Day.some(slot => 
-          slot.Day.includes(day) && slot.startTime === startTime
-      );
+    // 5. AUTH CHECK (Only Owner can update their section)
+    const teacher = await Teacher.findOne({ email: user.email });
+    if (mySectionDoc.Teacher.toString() !== teacher._id.toString()) {
+        throw new ApiError(403, "You can only update the timetable for your own section.");
+    }
 
-      if (!exists) {
-          section.Day.push({
-              Day: [day], // Schema expects an array of strings
-              startTime: startTime,
-              endTime: endTime // 👈 Auto-filled (e.g., "10:50")
-          });
-          addedCount++;
-      }
-  });
+    // 6. SYNC LOOP
+    let syncedCount = 0;
 
-  if (addedCount === 0) {
-      return res.status(400).json({
-          success: false,
-          message: `Time slot ${startTime} already exists for all selected days.`
-      });
-  }
+    days.forEach(shortDay => {
+        const fullDay = mapDayToFull(shortDay); // "MON" -> "Monday"
 
-  await section.save();
+        // A. Find classes in Target for this day
+        const targetSlots = targetSectionDoc.Day.filter(s => s.Day.includes(fullDay));
 
-  res.status(200).json({
-      success: true,
-      message: `Added class at ${startTime} - ${endTime} for [${days.join(", ")}]`,
-      section: sectionName
-  });
+        if (targetSlots.length === 0) {
+            // Logic: "if not present on that day, reject it" -> We simply skip.
+            return;
+        }
+
+        // B. Copy valid slots
+        targetSlots.forEach(tSlot => {
+            // Check for existing slot in My Section (Avoid Duplicates)
+            const alreadyExists = mySectionDoc.Day.some(mSlot => 
+                mSlot.Day.includes(fullDay) && mSlot.startTime === tSlot.startTime
+            );
+
+            if (!alreadyExists) {
+                mySectionDoc.Day.push({
+                    Day: [fullDay], 
+                    startTime: tSlot.startTime, // Sync Start
+                    endTime: tSlot.endTime      // Sync End (Copy exact duration)
+                });
+                syncedCount++;
+            }
+        });
+    });
+
+    if (syncedCount === 0) {
+        return res.status(400).json({
+            success: false,
+            message: "No new slots added. Either the target has no classes on these days, or you are already synced."
+        });
+    }
+
+    await mySectionDoc.save();
+
+    res.status(200).json({
+        success: true,
+        message: `Synced! Copied ${syncedCount} slots from ${section} to ${mySection}.`,
+        data: {
+            days: days,
+            source: section,
+            destination: mySection
+        }
+    });
 });
+// export const linkPermanentClass = asyncHandler(async (req, res) => {
+//     const user = req.user;
+//     const { courseName, section, classType, days, mySection } = req.body;
+
+//     // 1. Find Course
+//     const courseDoc = await Course.findOne({ 
+//         CourseName: { $regex: new RegExp(courseName, "i") } 
+//     });
+    
+//     if (!courseDoc) throw new ApiError(404, `DEBUG: Course with name '${courseName}' not found.`);
+
+//     console.log("------------------------------------------------");
+//     console.log(`🔎 SEARCHING FOR: ${courseName}`);
+//     console.log(`✅ FOUND COURSE ID: ${courseDoc._id.toString()}`);
+//     console.log("------------------------------------------------");
+
+//     // 2. Try to Find YOUR Section (Destination)
+//     const mySectionDoc = await Section.findOne({
+//         SectionName: mySection
+//     });
+
+//     if (!mySectionDoc) {
+//         throw new ApiError(404, `DEBUG: Section '${mySection}' does not exist at all.`);
+//     }
+
+//     console.log(`📂 SECTION '${mySection}' EXISTS.`);
+//     console.log(`🔗 IT IS LINKED TO COURSE ID: ${mySectionDoc.Course.toString()}`);
+//     console.log("------------------------------------------------");
+
+//     // 3. CHECK MATCH
+//     if (mySectionDoc.Course.toString() !== courseDoc._id.toString()) {
+//         throw new ApiError(409, `⚠️ MISMATCH! \nRequest Found Course: ${courseDoc._id} \nSection is Linked to: ${mySectionDoc.Course} \n\nSolution: Check the exact Course Name in DB.`);
+//     }
+
+//     // ... (Rest of the controller if match is successful) ...
+//     res.status(200).json({ success: true, message: "Debug complete. Check console logs." });
+// });
 /* ==========================================================================
    4️⃣ GET MY ATTENDANCE STATS
 ========================================================================== */

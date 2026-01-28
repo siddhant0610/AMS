@@ -8,7 +8,7 @@ import {
     getMyAttendance,
     getSessionDetails,
     checkAttendanceStatus,
-    addPermanentSlot,
+    linkPermanentClass,
     createAdHocSession
 } from "../controller/Attendance.controller.js";
 
@@ -62,7 +62,7 @@ router.get("/my",verifyJWT, verifyJWT,getMyAttendance);
 router.get("/session/:id", verifyJWT,getSessionDetails);
 // I will add timetable route later
 router.post("/create_class_temp",verifyJWT,createAdHocSession)
-router.post("/add-permanent", verifyJWT,addPermanentSlot);
+router.post("/add-permanent", verifyJWT,linkPermanentClass);
 router.get("/status/:id", verifyJWT,checkAttendanceStatus);
 // ✅ 3. Export attendance report (Excel)
 // Example: GET /api/attendance/export/:sectionId
