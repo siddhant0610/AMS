@@ -237,11 +237,9 @@ export const createAdHocSession = asyncHandler(async (req, res) => {
     const teacher = req.user;
     
     // 1. INPUT VALIDATION
-    const { year, branch, courseName, section, classType, date, timeSlots } = req.body;
+    const { year, branch, courseName, section, date, timeSlots } = req.body;
 
-    if (classType !== 'temporary') {
-        throw new ApiError(400, "Invalid classType. For this endpoint, use 'temporary'.");
-    }
+   
     if (!date || !timeSlots || !Array.isArray(timeSlots) || timeSlots.length === 0) {
         throw new ApiError(400, "Date and timeSlots (array) are required.");
     }
