@@ -8,6 +8,45 @@ import { Attendance } from "../modules/Attendance.js";
    🇮🇳 IST DATE & DAY UTILITIES (SAFE & STABLE)
 ============================================================ */
 
+const getNormalizedDate = (inputDate) => {
+    const d = inputDate ? new Date(inputDate) : new Date();
+    return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+};
+
+// 2. Get Day Name (e.g., "Friday")
+const getDayName = (dateObj) => {
+    return dateObj.toLocaleDateString("en-US", { weekday: 'long', timeZone: "Asia/Kolkata" });
+};
+
+// 3. Add 50 minutes (Math-based, Timezone Safe) 🛡️ FIXED
+const calculateEndTime = (startTime) => {
+    let [hours, minutes] = startTime.split(':').map(Number);
+    
+    // Add 50 minutes
+    minutes += 50;
+    
+    // Handle overflow (e.g., 60+ minutes)
+    if (minutes >= 60) {
+        hours += 1;
+        minutes -= 60;
+    }
+    
+    // Handle midnight wrap-around (optional, but good safety)
+    if (hours >= 24) hours = 0;
+
+    // Format back to "HH:MM"
+    const hStr = hours.toString().padStart(2, '0');
+    const mStr = minutes.toString().padStart(2, '0');
+    
+    return `${hStr}:${mStr}`;
+};
+
+// 4. Map Day (MON -> Monday)
+const mapDayToFull = (shortDay) => {
+    const map = { "MON": "Monday", "TUE": "Tuesday", "WED": "Wednesday", "THU": "Thursday", "FRI": "Friday", "SAT": "Saturday" };
+    return map[shortDay.toUpperCase()] || shortDay;
+};
+
 // Returns today's date at IST midnight (00:00)
 const getISTDate = () => {
   const now = new Date();
@@ -43,217 +82,160 @@ const getISTDayName = () => {
 ============================================================ */
 
 export const getTeacherDashboard = asyncHandler(async (req, res) => {
-  const user = req.user;
+    const todayDate = getNormalizedDate();
+    const dayName = getDayName(todayDate);
 
-  const todayDate = getISTDate();
-  const todayName = getISTDayName();
+    const teacher = await Teacher.findOne({ email: req.user.email });
+    if (!teacher) return res.status(200).json({ success: true, schedule: [] });
 
-  // 1️⃣ Find teacher
-  const teacher = await Teacher.findOne({ email: user.email });
-  if (!teacher) {
-    return res.status(200).json({
-      success: true,
-      role: "teacher",
-      schedule: []
-    });
-  }
+    const sections = await Section.find({
+        Teacher: teacher._id,
+        "Day.Day": dayName
+    }).populate("Student.Reg_No", "_id");
 
-  // 2️⃣ Get today's sections for teacher
-  const sections = await Section.find({
-    Teacher: teacher._id,
-    "Day.Day": todayName
-  }).populate("Student.Reg_No");
+    // --- SYNC LOOP (Fixed with try-catch) ---
+    for (const sec of sections) {
+        const slots = sec.Day.filter(d => d.Day.includes(dayName));
 
-  // 3️⃣ Create / Sync Attendance
-  for (const sec of sections) {
-    const todaySlots = sec.Day.filter(d => d.Day.includes(todayName));
+        for (const slot of slots) {
+            // A. Try to find existing session (Specific Time)
+            let session = await Attendance.findOne({
+                section: sec._id,
+                date: todayDate,
+                startTime: slot.startTime // <--- Important: Match exact time
+            });
 
-    for (const slot of todaySlots) {
-      let session = await Attendance.findOne({
-        section: sec._id,
-        date: todayDate
-      });
+            if (session) {
+                if (!session.isLocked && session.roomNo !== sec.RoomNo) {
+                    session.roomNo = sec.RoomNo;
+                    await session.save();
+                }
+                continue;
+            }
 
-      // 🔄 SYNC EXISTING SESSION
-      if (session) {
-        let updated = false;
-
-        if (session.startTime !== slot.startTime) {
-          session.startTime = slot.startTime;
-          updated = true;
+            // B. Create if not found (CRASH PROOF)
+            try {
+                await Attendance.create({
+                    section: sec._id,
+                    course: sec.Course,
+                    markedBy: teacher._id,
+                    date: todayDate,
+                    day: dayName,
+                    startTime: slot.startTime,
+                    endTime: slot.endTime,
+                    roomNo: sec.RoomNo,
+                    students: sec.Student.map(s => s.Reg_No ? { student: s.Reg_No._id, status: "absent" } : null).filter(Boolean),
+                    isExtraClass: false
+                });
+            } catch (error) {
+                // If it exists but we missed it, IGNORE the error
+                if (error.code === 11000) {
+                    continue; 
+                }
+                throw error; // Real error? Throw it.
+            }
         }
-
-        if (session.endTime !== slot.endTime) {
-          session.endTime = slot.endTime;
-          updated = true;
-        }
-
-        if (session.roomNo !== sec.RoomNo) {
-          session.roomNo = sec.RoomNo;
-          updated = true;
-        }
-
-        if (updated) await session.save();
-        continue;
-      }
-
-      // 🆕 CREATE NEW SESSION
-      const students = sec.Student
-        .filter(s => s.Reg_No)
-        .map(s => ({
-          student: s.Reg_No._id,
-          status: "absent",
-          faceRecognition: { verified: false }
-        }));
-
-      await Attendance.create({
-        section: sec._id,
-        course: sec.Course,
-        markedBy: teacher._id,
-        date: todayDate,
-        day: todayName,
-        startTime: slot.startTime,
-        endTime: slot.endTime,
-        roomNo: sec.RoomNo,
-        students,
-        isLocked: false
-      });
     }
-  }
 
-  // 4️⃣ Reload sessions after create/sync
-  const sessions = await Attendance.find({
-    markedBy: teacher._id,
-    date: todayDate
-  })
+    // --- FETCH FINAL SCHEDULE ---
+    const sessions = await Attendance.find({
+        date: todayDate,
+        markedBy: teacher._id
+    })
     .populate("course", "CourseName courseCode")
-    .populate("section", "SectionName RoomNo");
+    .populate("section", "SectionName");
 
-  // 5️⃣ Format response
-  const schedule = sessions
-    .map(session => ({
-      lecture_id: session._id,
-      subject: session.course?.CourseName || "Unknown Course",
-      courseCode: session.course?.courseCode || "",
-      section_name: session.section?.SectionName,
-      time: `${session.startTime} - ${session.endTime}`,
-      room: session.roomNo,
-      status: session.isLocked ? "Completed" : "Scheduled",
-      totalStudents: session.students.length,
-      presentCount: session.students.filter(
-        s => s.status === "present"
-      ).length
-    }))
-    .sort((a, b) => a.time.localeCompare(b.time));
+    const schedule = sessions.map(s => ({
+        lecture_id: s._id,
+        subject: s.course?.CourseName || "Unknown",
+        courseCode: s.course?.courseCode || "",
+        section_name: s.section?.SectionName || "",
+        time: `${s.startTime} - ${s.endTime}`,
+        room: s.roomNo,
+        status: s.isLocked ? "Completed" : "Scheduled",
+        type: s.isExtraClass ? "Temporary" : "Regular",
+        totalStudents: s.students.length,
+        presentCount: s.students.filter(st => st.status === "present").length
+    })).sort((a, b) => a.time.localeCompare(b.time));
 
-  return res.status(200).json({
-    success: true,
-    role: "teacher",
-    teacherName: teacher.name,
-    date: todayDate.toDateString(),
-    day: todayName,
-    count: schedule.length,
-    schedule
-  });
+    res.status(200).json({ success: true, teacherName: teacher.name, schedule });
 });
 
+
 /* ============================================================
-   👨‍🎓 STUDENT DASHBOARD
-   - Reads static timetable (Section)
-   - No attendance mutation
+   4️⃣ STUDENT DASHBOARD (Read-Only)
 ============================================================ */
 export const getStudentDashboard = asyncHandler(async (req, res) => {
-  const user = req.user;
-  
-  // 1. DETERMINE DATE (Query Param or Default to Today)
-  let targetDate;
-  if (req.query.date) {
-     targetDate = new Date(req.query.date); // e.g., "2026-01-15"
-  } else {
-     targetDate = getISTDate();
-  }
-  
-  // Normalize to Midnight for DB matching
-  targetDate.setHours(0, 0, 0, 0); 
+    const user = req.user;
+    const targetDate = req.query.date ? getNormalizedDate(req.query.date) : getNormalizedDate();
+    const targetDayName = getDayName(targetDate);
 
-  // 2. Get Day Name (e.g., "Monday") from the TARGET DATE
-  const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-  const targetDayName = days[targetDate.getDay()];
+    const student = await Student.findOne({ email: user.email });
+    if (!student) return res.status(200).json({ success: true, schedule: [] });
 
-  // 3. Find Student
-  const student = await Student.findOne({ email: user.email });
-  if (!student) return res.status(200).json({ success: true, schedule: [] });
+    // Find Sections where student is enrolled & has class today
+    const sections = await Section.find({
+        "Student.Reg_No": student._id,
+        "Day.Day": targetDayName
+    })
+    .populate("Course", "CourseName courseCode")
+    .populate("Teacher", "name");
 
-  // 4. Find Sections (Based on the Day of the Requested Date)
-  const sections = await Section.find({
-    "Student.Reg_No": student._id,
-    "Day.Day": targetDayName // 👈 Check if they had class on THAT day
-  })
-  .populate("Course", "CourseName courseCode")
-  .populate("Teacher", "name");
+    // Fetch Attendance records for these sections
+    const sectionIds = sections.map(sec => sec._id);
+    const existingSessions = await Attendance.find({
+        date: targetDate,
+        section: { $in: sectionIds }
+    }).populate("markedBy", "name");
 
-  // 5. Fetch Attendance Sessions for TARGET DATE
-  const sectionIds = sections.map(sec => sec._id);
-  const existingSessions = await Attendance.find({
-    date: targetDate, // 👈 Look for records on THAT date
-    section: { $in: sectionIds } 
-  });
+    let schedule = [];
 
-  let schedule = [];
+    sections.forEach((sec) => {
+        const daySlots = sec.Day.filter(d => d.Day.includes(targetDayName));
 
-  sections.forEach((sec) => {
-    // Filter slots for the specific day
-    const daySlots = sec.Day.filter(d => d.Day.includes(targetDayName));
+        daySlots.forEach(slot => {
+            // Match session by Section ID AND Start Time
+            const activeSession = existingSessions.find(s => 
+                s.section.toString() === sec._id.toString() && 
+                s.startTime === slot.startTime // Exact string match "10:00" === "10:00"
+            );
 
-    daySlots.forEach(slot => {
-      // Check for session match
-      const activeSession = existingSessions.find(s => 
-        s.section.toString() === sec._id.toString() && 
-        // Compare Hours (Simple integer match)
-        new Date(s.startTime).getHours() === parseInt(slot.startTime.split(':')[0])
-      );
+            let myStatus = "Pending";
+            let teacherName = sec.Teacher?.name || "TBD";
 
-      let myStatus = "Pending"; 
-      
-      // If viewing a PAST date and no session exists, it means the class didn't happen
-      if (!activeSession && targetDate < getISTDate().setHours(0,0,0,0)) {
-           myStatus = "No Record"; 
-      }
+            // If session exists (Teacher created it)
+            if (activeSession) {
+                teacherName = activeSession.markedBy?.name || teacherName; // Handle substitute
+                const myRecord = activeSession.students.find(s => s.student.toString() === student._id.toString());
+                if (myRecord) {
+                    myStatus = myRecord.status.charAt(0).toUpperCase() + myRecord.status.slice(1);
+                }
+            } else if (targetDate < getNormalizedDate()) {
+                // If past date and no session -> "No Class"
+                myStatus = "No Record";
+            }
 
-      if (activeSession) {
-          const myRecord = activeSession.students.find(s => 
-              s.student.toString() === student._id.toString()
-          );
-          if (myRecord) {
-              myStatus = myRecord.status.charAt(0).toUpperCase() + myRecord.status.slice(1);
-          }
-      }
-
-      // Format Times
-      const startStr = formatTimeIST(slot.startTime); 
-      const endStr = formatTimeIST(slot.endTime);
-
-      schedule.push({
-        id: sec._id,
-        subject: sec.Course?.CourseName || "Unknown",
-        courseCode: sec.Course?.courseCode || "",
-        teacher: sec.Teacher?.name || "TBD",
-        time: `${startStr} - ${endStr}`,
-        room: sec.RoomNo,
-        status: myStatus 
-      });
+            schedule.push({
+                id: sec._id,
+                subject: sec.Course?.CourseName || "Unknown",
+                courseCode: sec.Course?.courseCode || "",
+                teacher: teacherName,
+                time: `${slot.startTime} - ${slot.endTime}`,
+                room: sec.RoomNo,
+                status: myStatus
+            });
+        });
     });
-  });
 
-  schedule.sort((a, b) => a.time.localeCompare(b.time));
+    schedule.sort((a, b) => a.time.localeCompare(b.time));
 
-  return res.status(200).json({
-    success: true,
-    role: "student",
-    studentName: student.name,
-    date: targetDate.toDateString(),
-    day: targetDayName,
-    count: schedule.length,
-    schedule
-  });
+    res.status(200).json({
+        success: true,
+        role: "student",
+        studentName: student.name,
+        date: targetDate.toDateString(),
+        day: targetDayName,
+        count: schedule.length,
+        schedule
+    });
 });
