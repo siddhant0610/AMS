@@ -204,214 +204,146 @@ export const getSessionDetails = asyncHandler(async (req, res) => {
   });
 });
 
-// Helper: Add 50 minutes to "HH:MM"
-const calculateEndTime = (startTime) => {
-    const [hours, minutes] = startTime.split(':').map(Number);
-    const date = new Date();
-    date.setHours(hours, minutes + 50); // Fixed 50 mins duration
-    
-    return date.toLocaleTimeString('en-US', {
-        hour12: false, 
-        hour: '2-digit', 
-        minute: '2-digit',
-        timeZone: "Asia/Kolkata"
-    });
+// 1. Get Date without time (UTC Midnight)
+const getNormalizedDate = (inputDate) => {
+    const d = inputDate ? new Date(inputDate) : new Date();
+    return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
 };
-/**
- * Maps short day codes to full day names.
- * "MON" -> "Monday"
- */
+
+// 2. Get Day Name (e.g., "Friday")
+const getDayName = (dateObj) => {
+    return dateObj.toLocaleDateString("en-US", { weekday: 'long', timeZone: "Asia/Kolkata" });
+};
+
+// 3. Add 50 minutes (Math-based, Timezone Safe) 🛡️ FIXED
+const calculateEndTime = (startTime) => {
+    let [hours, minutes] = startTime.split(':').map(Number);
+    
+    // Add 50 minutes
+    minutes += 50;
+    
+    // Handle overflow (e.g., 60+ minutes)
+    if (minutes >= 60) {
+        hours += 1;
+        minutes -= 60;
+    }
+    
+    // Handle midnight wrap-around (optional, but good safety)
+    if (hours >= 24) hours = 0;
+
+    // Format back to "HH:MM"
+    const hStr = hours.toString().padStart(2, '0');
+    const mStr = minutes.toString().padStart(2, '0');
+    
+    return `${hStr}:${mStr}`;
+};
+
+// 4. Map Day (MON -> Monday)
 const mapDayToFull = (shortDay) => {
-    const map = {
-        "MON": "Monday", "TUE": "Tuesday", "WED": "Wednesday", 
-        "THU": "Thursday", "FRI": "Friday", "SAT": "Saturday", "SUN": "Sunday"
-    };
+    const map = { "MON": "Monday", "TUE": "Tuesday", "WED": "Wednesday", "THU": "Thursday", "FRI": "Friday", "SAT": "Saturday" };
     return map[shortDay.toUpperCase()] || shortDay;
 };
 
 
-// =========================================================================
-// 1️⃣ AD-HOC SESSION (Temporary Class)
-// =========================================================================
+/* ============================================================
+   1️⃣ AD-HOC SESSION (Temporary Class)
+   - Creates a one-time class in Attendance
+============================================================ */
 export const createAdHocSession = asyncHandler(async (req, res) => {
-    const teacher = req.user;
-    
-    // 1. INPUT VALIDATION
-    const { year, branch, courseName, section, date, timeSlots } = req.body;
+    const { courseName, section, date, timeSlots } = req.body;
 
-   
-    if (!date || !timeSlots || !Array.isArray(timeSlots) || timeSlots.length === 0) {
-        throw new ApiError(400, "Date and timeSlots (array) are required.");
-    }
+    const teacher = await Teacher.findOne({ email: req.user.email });
+    if (!teacher) throw new ApiError(404, "Teacher profile not found");
 
-    // 2. FIND COURSE (Case-Insensitive Regex)
-    const courseDoc = await Course.findOne({ 
-        CourseName: { $regex: new RegExp(courseName, "i") } 
-        // Optional: Add 'branch' or 'year' filter here if your schema allows
-    });
-    if (!courseDoc) throw new ApiError(404, `Course '${courseName}' not found.`);
+    const courseDoc = await Course.findOne({ CourseName: { $regex: new RegExp(courseName, "i") } });
+    if (!courseDoc) throw new ApiError(404, "Course not found");
 
-    // 3. FIND SECTION (Unique identifier: Name + Course)
-    const sectionDoc = await Section.findOne({ 
-        SectionName: section,
-        Course: courseDoc._id
-    }).populate("Student.Reg_No");
+    const sectionDoc = await Section.findOne({ SectionName: section, Course: courseDoc._id }).populate("Student.Reg_No");
+    if (!sectionDoc) throw new ApiError(404, "Section not found");
 
-    if (!sectionDoc) throw new ApiError(404, `Section '${section}' not found.`);
+    const targetDate = getNormalizedDate(date);
+    const dayName = getDayName(targetDate);
 
-    // 4. PREPARE SESSION DATA
-    const targetDate = new Date(date);
-    const dayName = targetDate.toLocaleDateString("en-US", { weekday: 'long', timeZone: "Asia/Kolkata" });
-    const createdSessions = [];
-
-    // 5. PROCESS SLOTS LOOP
     for (const start of timeSlots) {
-        // Auto-calculate End Time (50 mins)
         const end = calculateEndTime(start);
 
-        // 🚨 ROOM COLLISION CHECK
-        // Check if ANY class exists in this room during this time window
-        const roomClash = await Attendance.findOne({
+        // Check for room clash
+        const clash = await Attendance.findOne({
             roomNo: sectionDoc.RoomNo,
             date: targetDate,
-            $or: [
-                { startTime: { $lt: end }, endTime: { $gt: start } } // Overlap Formula
-            ]
+            startTime: start
         });
+        if (clash) throw new ApiError(409, `Room ${sectionDoc.RoomNo} is occupied at ${start}`);
 
-        if (roomClash) {
-            // Option: Throw error or skip. We throw error to alert the user.
-            throw new ApiError(409, `Room ${sectionDoc.RoomNo} is busy at ${start} (Occupied by another class).`);
-        }
-
-        // ✅ CREATE SESSION
-        const newSession = await Attendance.create({
+        await Attendance.create({
             section: sectionDoc._id,
             course: courseDoc._id,
-            markedBy: teacher._id, // The logged-in teacher creating the extra class
-            
+            markedBy: teacher._id,
             date: targetDate,
             day: dayName,
             startTime: start,
             endTime: end,
             roomNo: sectionDoc.RoomNo,
-            
-            // Map students to attendance array
-            students: sectionDoc.Student.map(s => s.Reg_No ? ({ 
-                student: s.Reg_No._id, status: "absent" 
-            }) : null).filter(Boolean),
-            
+            students: sectionDoc.Student.map(s => s.Reg_No ? { student: s.Reg_No._id, status: "absent" } : null).filter(Boolean),
             isExtraClass: true
         });
-
-        createdSessions.push(newSession);
     }
 
-    res.status(200).json({
-        success: true,
-        message: `Successfully created ${createdSessions.length} temporary session(s).`,
-        data: {
-            date: date,
-            section: section,
-            times: timeSlots
-        }
-    });
+    res.status(200).json({ success: true, message: "Ad-hoc session created successfully" });
 });
 
 
-// =========================================================================
-// 2️⃣ PERMANENT CLASS (Link / Sync Logic)
-// =========================================================================
+/* ============================================================
+   2️⃣ PERMANENT CLASS (Link / Copy)
+   - Copies timetable from 'section' (Source) to 'mySection' (Destination)
+============================================================ */
 export const addPermanentSlot = asyncHandler(async (req, res) => {
-    const user = req.user;
+    const { courseName, section, days } = req.body; // 'section' here is the SOURCE (e.g. "A")
+
+    const teacher = await Teacher.findOne({ email: req.user.email });
     
-    // 1. INPUT: Only the 'Source Section' is needed.
-    // We don't ask for time. We don't ask for "mySection" (we find it).
-    const { year, branch, courseName, section, classType, days } = req.body;
-
-    if (classType !== 'permanent') throw new ApiError(400, "Invalid classType.");
-    if (!days || !Array.isArray(days)) throw new ApiError(400, "Days array is required.");
-
-    // 2. VERIFY TEACHER
-    const teacher = await Teacher.findOne({ email: user.email });
-    if (!teacher) throw new ApiError(404, "Teacher not found.");
-
-    // 3. FIND SOURCE SECTION (Where the time is)
-    // We traverse THIS section to get the slots.
+    // Find Course
     const courseDoc = await Course.findOne({ CourseName: { $regex: new RegExp(courseName, "i") } });
-    if (!courseDoc) throw new ApiError(404, "Course not found.");
+    if (!courseDoc) throw new ApiError(404, "Course not found");
 
-    const sourceSection = await Section.findOne({ 
-        SectionName: section, 
-        Course: courseDoc._id 
-    });
-    
-    if (!sourceSection) throw new ApiError(404, `Source Section '${section}' not found. Cannot copy time.`);
+    // Find Source (Where we copy time from)
+    const sourceSection = await Section.findOne({ SectionName: section, Course: courseDoc._id });
+    if (!sourceSection) throw new ApiError(404, "Source section not found");
 
-    // 4. FIND DESTINATION SECTION (The one Mahesh Sir owns)
-    // We find the section for this Course that belongs to THIS Teacher.
-    const mySection = await Section.findOne({
-        Course: courseDoc._id,
-        Teacher: teacher._id
-    });
+    // Find Destination (Your section, e.g. "F")
+    const mySection = await Section.findOne({ Course: courseDoc._id, Teacher: teacher._id });
+    if (!mySection) throw new ApiError(404, "You don't have a section for this course");
 
-    if (!mySection) {
-        throw new ApiError(404, `You (Mahesh Sir) do not have a section assigned for course '${courseName}'.`);
+    // Prevent syncing to itself
+    if (sourceSection._id.toString() === mySection._id.toString()) {
+        return res.status(400).json({ success: false, message: "Source and destination cannot be the same. Use Ad-Hoc for extra classes." });
     }
 
-    // Prevent linking to itself
-    if (mySection._id.toString() === sourceSection._id.toString()) {
-        return res.status(400).json({ 
-            success: false, 
-            message: "You are trying to link the section to itself. If you want to create a NEW time, please use the manual route." 
-        });
-    }
+    let added = 0;
 
-    // 5. TRAVERSE & ADD (The Logic You Wanted)
-    let addedCount = 0;
-
-    days.forEach(shortDay => {
-        const fullDay = mapDayToFull(shortDay); // "TUE" -> "Tuesday"
-
-        // Traverse Source Section for this day
+    days.forEach(d => {
+        const fullDay = mapDayToFull(d);
+        // Filter Source slots for this day
         const sourceSlots = sourceSection.Day.filter(s => s.Day.includes(fullDay));
 
-        if (sourceSlots.length === 0) {
-            // "If not present on that day... reject it"
-            console.log(`Skipping ${fullDay}: No class found in ${section}.`);
-            return;
-        }
-
         sourceSlots.forEach(slot => {
-            // Check if My Section already has this time
-            const exists = mySection.Day.some(mySlot => 
-                mySlot.Day.includes(fullDay) && mySlot.startTime === slot.startTime
-            );
-
+            // Check if user's section already has this time
+            const exists = mySection.Day.some(ms => ms.Day.includes(fullDay) && ms.startTime === slot.startTime);
+            
             if (!exists) {
                 mySection.Day.push({
                     Day: [fullDay],
-                    startTime: slot.startTime, // 👈 Got it from traversing!
+                    startTime: slot.startTime,
                     endTime: slot.endTime
                 });
-                addedCount++;
+                added++;
             }
         });
     });
 
-    if (addedCount === 0) {
-        return res.status(400).json({ 
-            success: false, 
-            message: `No slots added. Either '${section}' has no classes on these days, or you are already synced.` 
-        });
-    }
-
-    await mySection.save();
-
-    res.status(200).json({
-        success: true,
-        message: `Successfully added ${addedCount} slots to ${mySection.SectionName} (copied from ${section}).`
-    });
+    if (added > 0) await mySection.save();
+    
+    res.status(200).json({ success: true, message: `${added} slots synced/added.` });
 });
 /*=============
    4️⃣ GET MY ATTENDANCE STATS
