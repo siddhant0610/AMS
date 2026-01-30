@@ -298,52 +298,52 @@ export const createAdHocSession = asyncHandler(async (req, res) => {
    - Copies timetable from 'section' (Source) to 'mySection' (Destination)
 ============================================================ */
 export const addPermanentSlot = asyncHandler(async (req, res) => {
-    const { courseName, section, days } = req.body; // 'section' here is the SOURCE (e.g. "A")
-
-    const teacher = await Teacher.findOne({ email: req.user.email });
+    const user = req.user;
     
-    // Find Course
-    const courseDoc = await Course.findOne({ CourseName: { $regex: new RegExp(courseName, "i") } });
-    if (!courseDoc) throw new ApiError(404, "Course not found");
+    // 1. INPUT: Simple details
+    const { year, courseName, section } = req.body;
 
-    // Find Source (Where we copy time from)
-    const sourceSection = await Section.findOne({ SectionName: section, Course: courseDoc._id });
-    if (!sourceSection) throw new ApiError(404, "Source section not found");
+    // 2. FIND TEACHER (You)
+    const teacher = await Teacher.findOne({ email: user.email });
+    if (!teacher) throw new ApiError(404, "Teacher profile not found");
 
-    // Find Destination (Your section, e.g. "F")
-    const mySection = await Section.findOne({ Course: courseDoc._id, Teacher: teacher._id });
-    if (!mySection) throw new ApiError(404, "You don't have a section for this course");
+    // 3. FIND COURSE
+    // Regex allows "daa" to match "DAA" or "Design & Analysis..."
+    const courseDoc = await Course.findOne({ 
+        CourseName: { $regex: new RegExp(courseName, "i") } 
+    });
+    if (!courseDoc) throw new ApiError(404, `Course '${courseName}' not found.`);
 
-    // Prevent syncing to itself
-    if (sourceSection._id.toString() === mySection._id.toString()) {
-        return res.status(400).json({ success: false, message: "Source and destination cannot be the same. Use Ad-Hoc for extra classes." });
-    }
-
-    let added = 0;
-
-    days.forEach(d => {
-        const fullDay = mapDayToFull(d);
-        // Filter Source slots for this day
-        const sourceSlots = sourceSection.Day.filter(s => s.Day.includes(fullDay));
-
-        sourceSlots.forEach(slot => {
-            // Check if user's section already has this time
-            const exists = mySection.Day.some(ms => ms.Day.includes(fullDay) && ms.startTime === slot.startTime);
-            
-            if (!exists) {
-                mySection.Day.push({
-                    Day: [fullDay],
-                    startTime: slot.startTime,
-                    endTime: slot.endTime
-                });
-                added++;
-            }
-        });
+    // 4. FIND SECTION
+    const sectionDoc = await Section.findOne({ 
+        SectionName: section, 
+        Course: courseDoc._id 
     });
 
-    if (added > 0) await mySection.save();
-    
-    res.status(200).json({ success: true, message: `${added} slots synced/added.` });
+    if (!sectionDoc) throw new ApiError(404, `Section '${section}' for course '${courseName}' not found.`);
+
+    // 5. THE LOGIC: ADD TEACHER TO ARRAY
+    // Check if you are already added to avoid duplicates
+    if (sectionDoc.Teacher.includes(teacher._id)) {
+        return res.status(200).json({
+            success: true,
+            message: `You are already assigned to ${courseName} - Section ${section}.`
+        });
+    }
+
+    // Push your ID into the array
+    sectionDoc.Teacher.push(teacher._id);
+    await sectionDoc.save();
+
+    res.status(200).json({
+        success: true,
+        message: `Success! You have been added as a teacher for ${courseName} (Section ${section}).`,
+        data: {
+            section: section,
+            course: courseName,
+            totalTeachers: sectionDoc.Teacher.length
+        }
+    });
 });
 /*=============
    4️⃣ GET MY ATTENDANCE STATS
