@@ -1,12 +1,12 @@
-import mongoose from "mongoose";
-
+import mongoose from 'mongoose';
 const submissionSchema = new mongoose.Schema({
-  // ... your existing schema fields ...
-  student: { type: mongoose.Schema.Types.ObjectId, ref: "Student" },
-  name: { type: String, required: true }
+  registrationNumber: { type: String, required: true ,unique:true},
+  photos: [{ type: String, required: true }], // base64 images
+  section:{ type: String, required: true },
+  academicYear:{ type: String, required: true },
+  name: { type: String, required: true},
+  branch:{type:String},
+  //submittedAt: { type: Date, default: Date.now }
 }, { timestamps: true });
 
-// 👇 THE FIX: Switch to the 'test' database for this specific model
-const testDB = mongoose.connection.useDb("test");
-
-export const Submission = testDB.model("Submission", submissionSchema);
+export const Submission = mongoose.model('Submission', submissionSchema);
