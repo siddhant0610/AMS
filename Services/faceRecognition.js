@@ -9,7 +9,7 @@ import sharp from "sharp";
 // ===============================
 // CONFIGURATION
 // ===============================
-const PREDICT_API_URL = "https://adiml1-complete-attendance.hf.space";
+const PREDICT_API_URL = "https://siddhants06-complete-attendance-api.hf.space";
 const HUGGINGFACE_TOKEN = process.env.HUGGINGFACE_TOKEN;
 const API_TIMEOUT = parseInt(process.env.API_TIMEOUT) || 300000; // 5 Minutes
 
