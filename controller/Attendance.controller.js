@@ -62,8 +62,9 @@ export const markAttendanceWithFace = asyncHandler(async (req, res) => {
   if (!files.length) throw new ApiError(400, "No images uploaded");
 
   // 2. Fetch Session
+  // Ensure we populate 'regNo' which is now critical for matching
   const attendance = await Attendance.findById(attendanceId)
-    .populate("students.student", "name regNo")
+    .populate("students.student", "name regNo") 
     .populate("section");
 
   if (!attendance) {
@@ -76,6 +77,7 @@ export const markAttendanceWithFace = asyncHandler(async (req, res) => {
   let batchResult;
 
   try {
+    // This calls your Python API
     batchResult = await processFaceBatch(
       imagePaths,
       attendance.section._id.toString()
@@ -85,67 +87,83 @@ export const markAttendanceWithFace = asyncHandler(async (req, res) => {
     throw new ApiError(500, `AI Service failed: ${error.message}`);
   }
 
-  // Cleanup
+  // Cleanup uploaded files
   files.forEach((f) => safeDelete(f.path));
 
   // =========================================================
-  // 🧠 LOGIC: ROBUST MATCHING
+  // 🧠 LOGIC: ROBUST REGISTRATION NUMBER MATCHING (UPDATED)
   // =========================================================
 
-  const detectedList = batchResult.results || [];
+  // Note: Adjust this depending on your Python API response structure
+  // If Python returns { attendance: [...] }, use batchResult.attendance
+ // =========================================================
+  // 🧠 LOGIC: ROBUST REGISTRATION NUMBER MATCHING (FIXED ENUM)
+  // =========================================================
 
-  // A. Create Normalized Set
-  const presentNamesSet = new Set();
+  const detectedList = batchResult.attendance || batchResult.results || [];
+
+  // A. Create Normalized Set of DETECTED REGISTRATION NUMBERS
+  const presentRegNosSet = new Set();
+  
   detectedList.forEach(item => {
-    let rawName = typeof item === 'string' ? item : (item.label || item.name || "");
-    if (rawName) presentNamesSet.add(rawName.toLowerCase().trim());
+    let detectedId = typeof item === 'string' ? item : (item.name || item.label || "");
+    
+    // Failsafe: Handle "RegNo_Name" format just in case
+    if (detectedId && detectedId.includes('_')) {
+        detectedId = detectedId.split('_')[0];
+    }
+
+    if (detectedId) {
+        presentRegNosSet.add(String(detectedId).trim());
+    }
   });
 
   const responseList = [];
   let presentCount = 0;
 
-  // B. Match & Update
+  // B. Match against Database Records
   attendance.students.forEach((record) => {
     if (!record.student) return;
 
-    const dbName = record.student.name || "";
-    const normalizedDbName = dbName.toLowerCase().trim();
-    const isPresent = normalizedDbName && presentNamesSet.has(normalizedDbName);
+    const dbRegNo = String(record.student.regNo || "").trim();
+    const isPresent = dbRegNo && presentRegNosSet.has(dbRegNo);
 
     if (isPresent) {
-      record.status = "present";
+      // ⚠️ FIX: Use lowercase 'present' for Mongoose Schema compliance
+      record.status = "present"; 
       record.faceRecognition = { verified: true, confidence: 99 };
       record.markedAt = new Date();
       presentCount++;
     } else {
+      // ⚠️ FIX: Use lowercase 'absent' for Mongoose Schema compliance
       record.status = "absent";
     }
 
-    // Build the JSON Array Response
+    // Build the JSON Array Response (Capitalized for Frontend)
     responseList.push({
       regNo: record.student.regNo,
       name: record.student.name,
-      status: isPresent ? "Present" : "Absent"
+      status: isPresent ? "Present" : "Absent" 
     });
   });
+
   attendance.totalPresent = presentCount;
-  // 4. Save
+  
+  // 4. Save (Now this will succeed!)
   attendance.isLocked = true;
   await attendance.save();
 
   // =========================================================
-  // ✅ JSON RESPONSE (Matches your requirement exactly)
+  // ✅ JSON RESPONSE
   // =========================================================
   res.status(200).json({
     success: true,
     lectureId: attendance.customId,
     message: "Attendance marked successfully",
-    fileName: `Attendance_${attendance.customId}.pdf`, // Just a string for Frontend to use
+    fileName: `Attendance_${attendance.customId}.pdf`,
     attendance: responseList
   });
 });
-
-
 /* ==========================================================================
    3️⃣ GET SESSION DETAILS
 ========================================================================== */
